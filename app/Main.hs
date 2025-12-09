@@ -66,6 +66,9 @@ preludeSrc = unlines
 
   , "data Ex : (A : U) -> (A -> U) -> U where"
   , "| ex : {A : U} {P : A -> U} (x : A) -> P x -> Ex A P"
+  
+  , "data Unit : U where"
+  , "| tt : Unit"
   ]
 
 --------------------------------------------------------------------------------

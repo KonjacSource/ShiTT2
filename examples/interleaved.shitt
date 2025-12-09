@@ -1,0 +1,29 @@
+mutual 
+
+  data A : U 
+  data B : A -> U 
+  def f : (a : A) -> B a -> Unit
+
+begin
+
+  data A 
+  | a1 : A 
+
+  data B 
+  | b1 : B a1 
+
+  def f
+  | a1 b1 = tt
+  
+  data A 
+  | a2 : (f : (a : A) -> B a -> U) -> f a1 b1 -> A
+  
+  def f 
+  | (a2 _ _) x = absurd x
+
+end
+
+def g : A -> Unit
+| a1 = tt
+| (a2 f x) = tt
+
