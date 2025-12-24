@@ -1,0 +1,23 @@
+-- You can check this file with my https://github.com/KonjacSource/ShiTT2
+
+data V : U where 
+| mkV : (A : U) -> (A -> U) -> V
+
+def coe : {A B : U} -> Id A B -> A -> B 
+| (refl _) a = a
+
+def coeEq : {A : U} (a : A) (eq : Id A A) -> Id (coe eq a) a
+| a (refl _) = refl a
+
+data elem : {A : U} -> A -> V -> U where 
+| mkE : {A : U} (a : A) (P : A -> U) -> P a -> elem a (mkV A P) 
+
+def R : V = mkV V (\x . elem x x -> Void)
+
+def nRinR : elem R R -> Void
+| (mkE a p h) = h (mkE _ (\ x. elem x x -> Void) h)
+
+def RinR : elem R R = mkE R (\ x. elem x x -> Void) nRinR
+
+-- This will stuck the checker, bucause I store normal form for functions, and it will get stucked when trying to normalize.
+-- def Russell : Void = nRinR RinR

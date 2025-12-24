@@ -16,3 +16,9 @@ def neq1 : Id (suc zero) zero -> U
 -- I don't know if there should be a case refl for type Id {_B} (f x) (g x)
 -- def test : {A B : U} (f g : A -> B) (x : A) -> Id (f x) (g x) -> Id f g 
 -- | f g x (refl y) = sorry 
+
+def transp : {A B : U} -> (Id A B) -> A -> B 
+| (refl _) a = a
+
+def transpEq : {A : U} (eq : Id A A) (a : A) -> Id (transp eq a) a
+| (refl _) a = refl a
