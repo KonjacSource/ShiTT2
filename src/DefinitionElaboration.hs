@@ -107,7 +107,7 @@ getConstructors dat = map go (dataCons dat) where
 insertCons :: Defs -> [(Name, ConsDef)] -> Defs
 insertCons = foldl (\d (c, def) -> M.insert c (DefCons def) d)
 
-checkProg' :: Defs -> Program -> IO Defs
+checkProg' :: HasCallStack => Defs -> Program -> IO Defs
 checkProg' defs [] = pure defs
 checkProg' defs ((sp, d):ds) = case d of
   RDefFunc d -> do

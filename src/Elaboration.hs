@@ -17,9 +17,11 @@ import qualified Unification as U
 import Value
 
 import qualified Presyntax as R
-import Definition 
+import Definition
 import qualified Data.Map as M
 import GHC.Stack (HasCallStack)
+import Data.Maybe (isJust)
+import Debug.Trace (trace)
 
 
 -- Elaboration
@@ -73,7 +75,7 @@ insertUntilName cxt name act = go =<< act where
 check :: Cxt -> R.Tm -> VTy -> IO Tm
 check cxt t a = case (t, force (defs cxt) a) of
 
-  (R.PrintCxt t, a) -> do 
+  (R.PrintCxt t, a) -> do
     putStrLn (showCxt cxt)
     putStrLn (replicate 80 '-')
     -- NOTE. there might be some unsolved metas in the @a@ which can be solved soon after the check. 
@@ -87,16 +89,21 @@ check cxt t a = case (t, force (defs cxt) a) of
   -- If the icitness of the lambda matches the Pi type, check as usual
   (R.Lam x i t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') i -> do
     Lam x i' <$> check (bind cxt x a) t ((defs cxt, b) $$ VVar (lvl cxt))
-  
+
   (R.LamCase cls, ty) -> do
     cls' <- mapM (checkLamCls cxt ty) cls
     case checkCover cxt ty (arity cls') (map clausePatterns cls') of
       Left err ->  throwIO $ Error cxt LambdaCaseUnCover
-      Right () -> pure $ LamCase cls' 
+      Right () -> pure $ LamCase cls'
 
   -- Otherwise if Pi is implicit, insert a new implicit lambda
   (t, VPi x Impl a b) -> do
     Lam x Impl <$> check (newBinder cxt x a) t ((defs cxt, b) $$ VVar (lvl cxt))
+
+  -- See https://github.com/KonjacSource/ShiTT2/issues/1
+  -- (t, a@(VData d sp)) | Just (c, sp) <- (trace ("| checking data: " ++ dataName d) $ isCons t) -> do 
+  --   putStrLn $ "Checking constructor " ++ consName c ++ " against type " ++ showVal cxt a
+  --   checkCons c sp (evalCxt cxt (consType c)) a
 
   (R.Let x a t u, a') -> do
     a <- check cxt a VU
@@ -105,25 +112,23 @@ check cxt t a = case (t, force (defs cxt) a) of
     let ~vt = evalCxt cxt t
     u <- check (define cxt x vt va) u a'
     pure (Let x a t u)
-  
+
   (R.Absurd t, ty) -> do
-    (t, t_ty) <- infer cxt t 
+    (t, t_ty) <- infer cxt t
     let cxt' = bind cxt "_absurd" t_ty
-    case splitCxt cxt' (lvl cxt' - 1) of 
-      Just [] -> pure $ Absurd t 
-      Just ctxs -> do 
-        putStrLn "Absurd context:" 
+    case splitCxt cxt' (lvl cxt' - 1) of
+      Just [] -> pure $ Absurd t
+      Just ctxs -> do
+        putStrLn "Absurd context:"
         mapM_ (putStrLn . showCxt) ctxs
         throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt t_ty)
       Nothing -> throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt t_ty)
 
-  (R.Match t cls, ty) -> do 
+  (R.Match t cls, ty) -> do
     (t', tt) <- infer cxt t
     let lc = R.LamCase cls
     lc' <- check cxt lc (varr cxt tt ty)
     pure $ App lc' t' Expl
-  
-  -- (t, VData d sp) -> undefined -- TODO
 
   (R.Hole, a) ->
     freshMeta cxt
@@ -132,14 +137,102 @@ check cxt t a = case (t, force (defs cxt) a) of
     (t, inferred) <- insert cxt $ infer cxt t
     unifyCatch cxt expected inferred
     pure t
+  -- where
+  --   isCons :: R.Tm -> Maybe (ConsDef, R.Spine)
+  --   isCons t = case R.flattenApp t of
+  --     (R.Var c, args) -> case M.lookup c (defs cxt) of
+  --       Just (DefCons cons) -> Just (cons, args)
+  --       _                   -> Nothing
+  --     _ ->  Nothing
+
+  --   checkCons :: ConsDef -> R.Spine -> VTy -> VTy -> IO Tm
+  --   checkCons c sp ty goal = do
+  --     putStrLn $ "Elaborating constructor " ++ consName c
+  --     (metas, ret_ty) <- metaSpine ty
+  --     putStrLn $ "Metas for constructor " ++ consName c ++ ": " ++ show (length metas)
+  --     putStrLn $ "Metas: " ++ show (map (showVal cxt) (map fst metas))
+  --     putStrLn $ "Goal " ++ showVal cxt goal
+  --     putStrLn $ "Return type " ++ showVal cxt ret_ty
+  --     unifyCatch cxt goal ret_ty
+  --     putStrLn $ "Unification done for constructor " ++ consName c
+  --     build <- go sp metas ty []
+  --     putStrLn $ "Constructor " ++ consName c ++ " checked successfully."
+  --     pure (applySp (Call $ consName c) build)
+  --     where
+  --       metaSpine ::VTy -> IO (Spine, Val)
+  --       metaSpine ty = case force (defs cxt) ty of
+  --         ty@(VData {}) -> pure ([], ty)
+  --         VPi x i a b -> do
+  --           m <- freshMeta cxt
+  --           let mv = evalCxt cxt m
+  --           (rest, ty) <- metaSpine ((defs cxt, b) $$ mv)
+  --           pure ((mv, i) : rest, ty)
+  --         _ -> throwIO $ Error cxt $ TypeMismatch (Left "a data type or a pi type") (quoteCxt cxt ty) (applySp (Call $ consName c) [])
+
+  --       go :: R.Spine -- Arguments for now
+  --          -> Spine -- Metas to fill
+  --          -> VTy -- Current type, insert its argument when needed 
+  --          -> TSpine -- Built spine
+  --          -> IO TSpine
+  --       go [] metas ty build = trace "go []" $ case force (defs cxt) ty of
+  --         VData {}
+  --           | null metas -> do
+  --             unifyCatch cxt ty goal
+  --             pure build
+  --           | otherwise ->
+  --             error "IMPOSSIBLE"
+  --         VPi x Impl a b
+  --           | ((m', Impl):ms) <- metas -> do
+  --             m <- freshMeta cxt
+  --             let mv = evalCxt cxt m
+  --             unifyCatch cxt m' mv
+  --             go [] ms ((defs cxt, b) $$ mv) (build ++ [(m, Impl)])
+  --           | ((_, Expl):_) <- metas ->
+  --             throwIO $ Error cxt $ IcitMismatch Expl Impl
+  --           | otherwise -> error "IMPOSSIBLE"
+  --         ty -> throwIO $ Error cxt $ TypeMismatch (Left "a data type") (quoteCxt cxt ty) (applySp (Call $ consName c) build)
+  --       go allsp@((t, i) : sp) metas ty build = trace ("go " ++ show (R.stripPos t)) $ case (i, force (defs cxt) ty, metas) of
+  --         (Right i, VPi x i' a b, (m, _) : ms)
+  --           | i == i' -> do
+  --             putStrLn "(Right i, VPi ... ), no insert"
+  --             t' <- check cxt t a
+  --             putStrLn $ "check done for argument " ++ show (R.stripPos t)
+  --             unifyCatch cxt m (evalCxt cxt t')
+  --             putStrLn $ "unify done for argument " ++ show (R.stripPos t)
+  --             go sp ms ((defs cxt, b) $$ evalCxt cxt t') (build ++ [(t', i)])
+  --         (Left name, VPi x Impl a b, (m, _) : ms)
+  --           | name == x -> do
+  --             putStrLn "(Left name, VPi ... ), no insert"
+  --             t' <- check cxt t a
+  --             unifyCatch cxt m (evalCxt cxt t')
+  --             go sp ms ((defs cxt, b) $$ evalCxt cxt t') (build ++ [(t', Impl)])
+  --           | otherwise -> do
+  --             putStrLn "(Left name, VPi ... ), insert"
+  --             m' <- freshMeta cxt
+  --             let mv = evalCxt cxt m'
+  --             unifyCatch cxt m mv
+  --             go ((t, i) : sp) ms ((defs cxt, b) $$ mv) (build ++ [(m', Impl)])
+  --         (Right Expl, VPi x Impl a b, (m, _) : ms) -> do 
+  --           putStrLn $ "(Right Expl, VPi ... ), insert" ++ show x
+  --           m' <- freshMeta cxt
+  --           let mv = evalCxt cxt m'
+  --           unifyCatch cxt m mv
+  --           go ((t, Right Expl) : sp) ms ((defs cxt, b) $$ mv) (build ++ [(m', Impl)])
+  --         (Right Impl, VPi x Expl a b, _) -> do
+  --           putStrLn "(Right Impl, VPi ... ), error"
+  --           throwIO $ Error cxt $ IcitMismatch Impl Expl
+  --         (_, ty, ms) -> do
+  --           putStrLn "go _, not a pi" 
+  --           throwIO $ Error cxt $ TypeMismatch (Left "a pi type") (quoteCxt cxt ty) (applySp (Call $ consName c) build)
 
 infer :: Cxt -> R.Tm -> IO (Tm, VTy)
 infer cxt = \case
 
-  R.PrintCxt t -> do 
+  R.PrintCxt t -> do
     putStrLn "printing context"
     putStrLn (showCxt cxt)
     infer cxt t
+
 
   R.SrcPos pos t ->
     infer (cxt {pos = pos}) t
@@ -148,7 +241,7 @@ infer cxt = \case
     let go ix (types :> (x', origin, a))
           | x == x' && origin == Source = pure (Var ix, a)
           | otherwise                   = go (ix + 1) types
-        go ix [] = case M.lookup x (defs cxt) of 
+        go ix [] = case M.lookup x (defs cxt) of
           Just (DefFunc c) -> pure (Call x, eval (defs cxt) (env cxt) (funcType c))
           Just (DefCons c) -> pure (Call x, eval (defs cxt) (env cxt) (consType c))
           Just (DefData c) -> pure (Call x, eval (defs cxt) (env cxt) (dataType c))
@@ -164,10 +257,10 @@ infer cxt = \case
   R.Lam x Left{} t ->
     throwIO $ Error cxt InferNamedLam
 
-  R.LamCase _ -> 
+  R.LamCase _ ->
     throwIO $ Error cxt InferLamCase
 
-  R.Match t cls -> 
+  R.Match t cls ->
     throwIO $ Error cxt InferLamCase
 
   R.App t u i -> do
@@ -220,9 +313,9 @@ infer cxt = \case
     t <- freshMeta cxt
     pure (t, a)
 
-  R.Absurd t -> do 
+  R.Absurd t -> do
     ty <- evalCxt cxt <$> freshMeta cxt
-    t <- check cxt t ty 
+    t <- check cxt t ty
     pure (t, ty)
 
 findType :: Cxt -> Lvl -> VTy
@@ -277,8 +370,8 @@ The weired thing is that the some of the outer variables are assigned by inner v
 This would not be a problem when we implementing it, since we are using de Bruijn levels as values.
 -}
 
-data UnifRes 
-  = UnifOk Cxt 
+data UnifRes
+  = UnifOk Cxt
   | UnifStuck  -- When Agda would say : I'm not sure if there should be a case for the constructor 
   | UnifFail   -- Absurd pattern
 
@@ -287,7 +380,7 @@ data UnifRes
 -- t is their type, and ctx' is the context after unification.
 -- We need to update the portion of the context that comes after the unified variable.
 unify :: Cxt -> Val -> Val -> VTy -> IO UnifRes
-unify ctx u v t = 
+unify ctx u v t =
   case (force' ctx u, force' ctx v) of
     (VVar x, v)
       | x `notElem` fv (defs ctx) (lvl ctx) v ->
@@ -299,9 +392,9 @@ unify ctx u v t =
       | consName c == consName c' ->
           unifySp ctx us vs $ evalCxt ctx (consType c)
       | otherwise -> pure UnifFail
-    (u, v) -> 
+    (u, v) ->
       (U.unify (defs ctx) (env ctx) (lvl ctx) u v >> pure (UnifOk ctx))
-      `catch` \ UnifyError -> 
+      `catch` \ UnifyError ->
           pure UnifStuck
 
 unifySp :: HasCallStack => Cxt -> Spine -> Spine -> VTy -> IO UnifRes
@@ -309,9 +402,9 @@ unifySp ctx us vs ts = case (reverse us, reverse vs, ts) of
   ([], [], _) -> pure $ UnifOk ctx
   ((force' ctx -> u, i1):us, (force' ctx -> v, i2):vs, VPi x i3 t b) | i1 == i2 -> do
     uni_res <- unify ctx (updateVal ctx u) (updateVal ctx v) t
-    case uni_res of 
-      UnifOk ctx' -> 
-        let u' = updateVal ctx' u in 
+    case uni_res of
+      UnifOk ctx' ->
+        let u' = updateVal ctx' u in
         unifySp ctx' us vs ((defs ctx, b) $$ u')
       e -> pure e
   -- ((force' ctx -> u, i1):us, (force' ctx -> v, i2):vs, VPi x i3 t b) -> do 
@@ -323,7 +416,7 @@ unifySp ctx us vs ts = case (reverse us, reverse vs, ts) of
   --   error "!!!!"
   _ -> throwIO $ DefError ctx $ PatArgMismatch
 
-freshVal :: Defs -> [Val] -> [Val] -> Val -> Val 
+freshVal :: Defs -> [Val] -> [Val] -> Val -> Val
 freshVal def from to = eval def to . quote def from (Lvl (length from))
 
 -- Note. This is a very bad function, it refresh the hole context.
@@ -342,26 +435,26 @@ updateCxt ctx x v = if length env' /= length bds' then error "!!!" else ctx {env
   changeTail orig new = take (length orig - length new) orig ++ new
 
   -- The enviroment where only x changed.
-  env2 = postenv ++ v : prenv 
+  env2 = postenv ++ v : prenv
 
   -- Use the context above to update the parts of the context affected by it.
   -- Note that earlier parts of the context may also be affected, so we need to refresh the entire context here.
   -- The previous version only updated the later part of the context.
-  refresh :: [Val] -> Types -> ([Val], Types) 
+  refresh :: [Val] -> Types -> ([Val], Types)
   refresh [] [] = ([], [])
-  refresh (v:es) ((x,ori,t):tys) = 
-    let (es', tys') = refresh es tys 
-        env'' = changeTail env2 es' 
+  refresh (v:es) ((x,ori,t):tys) =
+    let (es', tys') = refresh es tys
+        env'' = changeTail env2 es'
     in (freshVal def env1 env'' v:es', (x, ori, freshVal def env1 env'' t):tys')
   refresh _ _ = error "refresh: impossible"
 
-  (env', typ') = refresh env1 typ 
+  (env', typ') = refresh env1 typ
 
   genBDs :: [(Ix, Val)] -> [BD]
-  genBDs = map checkBD where 
+  genBDs = map checkBD where
     checkBD (ix, VVar lv) | ix == lvl2Ix (lvl ctx) lv = Bound
     checkBD _ = Defined
-  
+
   bds' = genBDs [ (Ix x, v) | (x, v) <- zip [0 .. length env' - 1] env' ]
 
 checkCls :: HasCallStack => Cxt -> Id -> Ty -> R.RClause -> IO Clause
@@ -371,17 +464,17 @@ checkCls ctx func_name func_typ (R.RClause rps rhs) = do
   rhs' <- check ctx' rhs rhs_ty
   let rhs'' = nf (defs ctx') (env ctx') rhs'
   -- NOTE. The @nf@ here should remove all the metas.
-  if noMetas rhs'' then 
+  if noMetas rhs'' then
     pure $ Clause ps rhs''
   else do
     throwIO $ DefError ctx $ UnsolvedMetaInFuncDef func_name
 
 checkLamCls :: HasCallStack => Cxt -> VTy -> R.RClause -> IO Clause
-checkLamCls ctx fty (R.RClause rps rhs) = do 
+checkLamCls ctx fty (R.RClause rps rhs) = do
   (ps, ctx', rhs_ty) <- checkPat False ctx rps fty
   rhs' <- check ctx' rhs rhs_ty
   let rhs'' = nf (defs ctx') (env ctx') rhs'
-  if noMetas rhs'' then 
+  if noMetas rhs'' then
     pure $ Clause ps rhs''
   else do
     throwIO $ Error ctx $ UnsolvedMetaInLambdaCase
@@ -391,7 +484,7 @@ checkLamCls ctx fty (R.RClause rps rhs) = do
 -- Throws `Error`, throw `DefError _ $ WrongPattern _ _` for absurd patterns, `DefError _ $ UnsurePattern _ _` for IDK patterns.
 -- TODO : Change the return type to `IO ([(Pattern, Icit)], Spine, Cxt, VTy)`
 checkPat :: Bool -> Cxt -> R.RPatterns -> VTy -> IO ([(Pattern, Icit)], Cxt, VTy)
-checkPat isCons ctx [] ty 
+checkPat isCons ctx [] ty
   | isCons = case force' ctx ty of -- If we are elaborating constructor patterns, we need to make sure all implicit patterns are filled.
       VPi x Impl a b -> do
         let ctx' = bind ctx ('_':x) a
@@ -402,11 +495,11 @@ checkPat isCons ctx [] ty
   | otherwise = pure ([], ctx, ty)
 checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (force' ctx -> a) b) | i == i' =
   case M.lookup c (defs ctx) of
-    Just (DefCons _) -> 
+    Just (DefCons _) ->
       case a of
         VData d d_arg -> do
           (c_tele, c_ix) <- case lookupCons d c of
-            Just r -> pure r  
+            Just r -> pure r
             Nothing -> throwIO $ DefError ctx $ NameIsNotCons c (Just d)
           let c_ty = evalCxt ctx $ getConsType d c_tele c_ix
           (ps', ctx', c_ty') <- checkPat True ctx c_arg c_ty
@@ -419,7 +512,7 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (for
           -- trace (showVal ctx' a) $ pure ()
           -- trace (showVal ctx' c_ty') $ pure ()
           -- trace (showVal ctx' d_type) $ pure ()
-          
+
           -- Here we try to unify the returning indexes of constructor pattern with the type
           uni_res <- unifySp ctx' d_arg d_arg' d_type
           ctx'' <- case uni_res of
@@ -444,7 +537,7 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (for
           (ps', rest, rhs) <- checkPat isCons ctx' ps b'
           pure ((PatVar x, i):ps', rest, rhs)
       | otherwise     -> throwIO $ DefError ctx $ NameIsNotCons c Nothing
-checkPat isCons ctx ps@((Left x, p):ps') (force' ctx -> VPi x' i' (force' ctx -> a) b) 
+checkPat isCons ctx ps@((Left x, p):ps') (force' ctx -> VPi x' i' (force' ctx -> a) b)
   | i' == Impl && x == x' = checkPat isCons ctx ((Right Impl, p):ps') (VPi x' Impl a b) -- Jump to the former clause
   | otherwise             = do
       let ctx' = bind ctx ('_':x') a
@@ -465,10 +558,10 @@ type ClauseLHS = [(Pattern, Icit)]
 
 type MissingPattern = [Spine]
 
-data CoverCheckingError = CoverMissPat MissingPattern | MeetIDKCons 
+data CoverCheckingError = CoverMissPat MissingPattern | MeetIDKCons
   deriving (Show)
 
-data CoverRes 
+data CoverRes
   = CoverOk
   | CoverStuck Lvl -- Which variable is stuck
   | CoverFail [(Cxt, Spine)] -- Meet a dead end
@@ -478,10 +571,10 @@ checkCover ctx fty arity clss = case testManySpine (defs ctx) clss [initSp] of
     Nothing -> Left MeetIDKCons
     Just [] -> Right ()
     Just sp -> Left . CoverMissPat $ map snd sp
-  where 
+  where
     genInitSpine :: Cxt -> VTy -> Int -> (Cxt, Spine)
     genInitSpine cxt ty 0 = (cxt, [])
-    genInitSpine cxt (force' cxt -> VPi x i a b) arity = 
+    genInitSpine cxt (force' cxt -> VPi x i a b) arity =
       let (cxt', sp) = genInitSpine (bind cxt ("_cov_chk_"++x) a) ((defs cxt, b) $$ VVar (lvl cxt)) (arity - 1)
       in (cxt', sp ++ [(VVar (lvl cxt), i)]) -- TODO: Spine is reversed, change to normal list one day. 
     genInitSpine _ _ _ = error "genInitSpine: impossible"
@@ -495,23 +588,23 @@ checkCover ctx fty arity clss = case testManySpine (defs ctx) clss [initSp] of
 -- Return `Nothing`, if there is one or more IDK constructors. 
 splitCxt :: Cxt -> Lvl -> Maybe [Cxt]
 splitCxt cxt x = case force' cxt (findType cxt x) of
-  x_ty@(VData d d_arg) -> might $ do 
-    fmap join $ forM (dataCons d) $ \c@(c_name, c_tele, c_ix) -> do 
+  x_ty@(VData d d_arg) -> might $ do
+    fmap join $ forM (dataCons d) $ \c@(c_name, c_tele, c_ix) -> do
           -- split x to constructor c
           -- make a raw pattern
-          let makePs :: Telescope -> R.RPatterns 
+          let makePs :: Telescope -> R.RPatterns
               makePs [] = []
               makePs ((x, i, _):xs) = (Right i, R.RPat ("_cov_chk_"++x) []) : makePs xs
           let p = R.RPat c_name (makePs c_tele)
           -- check the pattern against x's type
           cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl x_ty (Closure (env cxt) U)) >>= pure . Just)
-                                `catch` \case 
+                                `catch` \case
                                   DefError _ (UnsurePattern _ _) -> quitMight
                                   DefError _ (WrongPattern _ _) -> pure Nothing
                                   e -> error $ "impossible: " ++  show e
-          case cp of 
+          case cp of
             Nothing -> pure []
-            Just ([(p', _)], cxt', _) -> do 
+            Just ([(p', _)], cxt', _) -> do
               let pv = p2v (defs cxt) (lvl cxt) p'
               let cxt'' = updateCxt cxt' x pv
               pure [cxt'']
@@ -524,9 +617,9 @@ splitCxt cxt x = case force' cxt (findType cxt x) of
 -- If fails, move to next clause lhs.
 testSpine :: Defs -> [ClauseLHS] -> Cxt -> Spine -> CoverRes
 testSpine defs clss cxt sp = go clss where -- cxt |- sp 
-  go = \case 
+  go = \case
     [] -> CoverFail [(cxt, sp)]
-    (ps:rest) -> case match defs (env cxt) ps sp of 
+    (ps:rest) -> case match defs (env cxt) ps sp of
       MatchSuc _ -> CoverOk
       MatchFailed -> go rest -- move to next clause
       MatchStuck (BVar x) -> CoverStuck x
@@ -536,21 +629,21 @@ genSpine :: Cxt -> Spine -> Lvl -> Maybe [(Cxt, Spine)]
 genSpine cxt sp l = do -- Maybe
   splitted_cxts <- splitCxt cxt l
   pure $ do -- Maybe
-    cxt' <- splitted_cxts  
+    cxt' <- splitted_cxts
     let sp' = updateSp cxt' sp
     pure (cxt', sp')
 
 testManySpine :: Defs -> [ClauseLHS] -> [(Cxt, Spine)] -> Maybe [(Cxt, Spine)]
-testManySpine defs clss = \case 
+testManySpine defs clss = \case
   [] -> Just []
-  (cxt, sp):rest -> case testSpine defs clss cxt sp of 
+  (cxt, sp):rest -> case testSpine defs clss cxt sp of
     CoverOk -> testManySpine defs clss rest
     CoverStuck l -> do
-      gen <- genSpine cxt sp l 
-      left <- forM gen $ \ (cxt', sp') -> 
+      gen <- genSpine cxt sp l
+      left <- forM gen $ \ (cxt', sp') ->
         testManySpine defs clss [(cxt', sp')]
       right <- testManySpine defs clss rest
-      pure $ join left ++ right 
-    CoverFail sp' -> do 
+      pure $ join left ++ right
+    CoverFail sp' -> do
       right <- testManySpine defs clss rest
       pure $ sp' ++ right

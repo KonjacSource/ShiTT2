@@ -39,7 +39,7 @@ match1 defs env pat val = case (pat, val) of
   (PatCon _ _, VRigid x _)  -> MatchStuck (BVar x)
   (PatCon _ _, VFunc f _)   -> MatchStuck (BFunc f)
   (PatCon _ _, VHold f _)   -> MatchStuck (BFunc f)
-  (PatCon _ _, VFlex m _ _) -> MatchStuck (BFlex m)
+  (PatCon _ _, VFlex m _) -> MatchStuck (BFlex m)
 
 match :: Defs -> Env -> [(Pattern, Icit)] -> Spine -> MatchResult
 match defs env pats vals = go defs env pats (reverse vals) where
@@ -56,24 +56,25 @@ infixl 8 $$
 ($$) :: HasCallStack => (Defs, Closure) -> Val -> Val
 ($$) (defs, Closure env t) ~u = eval defs (env :> u) t
 
-vApp :: HasCallStack => Defs -> Env -> Val -> Val -> Icit -> Val
-vApp defs env t ~u i = case force defs t of
+vApp :: HasCallStack => Defs -> Val -> Val -> Icit -> Val
+vApp defs t ~u i = case force defs t of
   VLam _ _ t  -> (defs, t) $$ u
-  VFlex  m sp env -> VFlex  m (sp :> (u, i)) env
+  VFlex  m sp -> VFlex  m (sp :> (u, i))
   VRigid x sp     -> VRigid x (sp :> (u, i))
+  -- env is used here,  when t is a meta solution, so that env = [], then t must be a closed term. so sp is empty too.
   VFunc f sp
-    | length sp + 1 < arity f -> evalFun defs env f (funcClauses f) (sp :> (u, i))
+    | length sp + 1 < arity f -> evalFun defs [] f (funcClauses f) (sp :> (u, i))
     | otherwise -> let (sp', rest) = splitAt (arity f) (sp :> (u,i)) in
-        vAppSp defs env (evalFun defs env f (funcClauses f) sp') rest
+        vAppSp defs (evalFun defs [] f (funcClauses f) sp') rest
   VHold f sp -> VHold f (sp :> (u,i))
   VLamCase env cls sp
     | length sp + 1 < arity cls -> evalLamCase defs env cls (sp :> (u, i))
     | otherwise -> let (sp', rest) = splitAt (arity cls) (sp :> (u,i)) in
-        vAppSp defs env (evalLamCase defs env cls sp') rest
+        vAppSp defs (evalLamCase defs env cls sp') rest
   VLamCaseHold env cls sp -> VLamCaseHold env cls (sp :> (u,i))
   VCons c sp -> VCons c (sp :> (u,i))
   VData d sp -> VData d (sp :> (u,i))
-  t           -> error "impossible"
+  t           -> error "IMPOSSIBLE"
 
 -- | Make sure `(length sp) <= arity f`
 evalFun :: HasCallStack => Defs -> Env -> FuncDef -> [Clause] -> Spine -> Val
@@ -86,6 +87,7 @@ evalFun defs env f (c:cs) sp
         MatchStuck _ -> VHold f sp       -- Stucked
         MatchSuc env' -> eval defs env' (clauseRhs c) -- Succeeded
 
+-- TODO: refactor with evalFun
 evalLamCase :: HasCallStack => Defs -> Env -> [Clause] -> Spine -> Val
 evalLamCase defs env [] sp = VLamCaseHold env [] sp -- No matchable clause
 evalLamCase defs env (c:cs) sp
@@ -119,27 +121,27 @@ evalLamCase' defs env cls sp = go cls where
           MatchStuck _ -> Nothing       -- Stucked
           MatchSuc env' -> Just $ eval defs env' (clauseRhs c) -- Succeeded
 
-vAppSp :: Defs -> Env -> Val -> Spine -> Val
-vAppSp defs env t = \case
+vAppSp :: Defs -> Val -> Spine -> Val
+vAppSp defs t = \case
   []           -> t
-  sp :> (u, i) -> vApp defs env (vAppSp defs env t sp) u i
+  sp :> (u, i) -> vApp defs (vAppSp defs t sp) u i
 
 vMeta :: HasCallStack => Env -> MetaVar -> Val
 vMeta env m = case lookupMeta m of
   Solved v -> v
-  Unsolved -> VMeta m env
+  Unsolved -> VMeta m
 
 vAppBDs :: HasCallStack => Defs -> Env -> Val -> [BD] -> Val
 vAppBDs defs env ~v bds = case (env, bds) of
   ([]       , []            ) -> v
-  (env :> t , bds :> Bound  ) -> vApp defs env (vAppBDs defs env v bds) t Expl
+  (env :> t , bds :> Bound  ) -> vApp defs (vAppBDs defs env v bds) t Expl
   (env :> t , bds :> Defined) -> vAppBDs defs env v bds
   _                           -> error "impossible"
 
 eval :: HasCallStack => Defs -> Env -> Tm -> Val
 eval defs env = \case
   Var x              -> env !! unIx x
-  App t u i          -> vApp defs env (eval defs env t) (eval defs env u) i
+  App t u i          -> vApp defs (eval defs env t) (eval defs env u) i
   Lam x i t          -> VLam x i (Closure env t)
   Pi x i a b         -> VPi x i (eval defs env a) (Closure env b)
   Let _ _ t u        -> eval defs (env :> eval defs env t) u
@@ -153,7 +155,7 @@ eval defs env = \case
                             | otherwise-> VFunc f []
                           Just (DefData d) -> VData d []
                           Just (DefCons c) -> VCons c []
-                          Nothing -> error "eval: impossible"
+                          Nothing -> error $ "eval: impossible " ++ show f
   LamCase clauses -> VLamCase env clauses []
 
 evalCxt :: HasCallStack => Cxt -> Tm -> Val
@@ -161,7 +163,7 @@ evalCxt ctx = eval (defs ctx) (env ctx)
 
 force :: Defs -> Val -> Val
 force defs = \case
-  VFlex m sp env | Solved t <- lookupMeta m -> force defs (vAppSp defs env t sp)
+  VFlex m sp | Solved t <- lookupMeta m -> force defs (vAppSp defs t sp) -- t is in empty env
   t -> t
 
 force' :: Cxt -> Val -> Val
@@ -180,7 +182,7 @@ quoteSp defs env l t = \case
 
 quote :: HasCallStack => Defs -> Env -> Lvl -> Val -> Tm
 quote defs env l t = case force defs t of
-  VFlex m sp _ -> quoteSp defs env l (Meta m) sp
+  VFlex m sp -> quoteSp defs env l (Meta m) sp
   VRigid x sp  -> quoteSp defs env l (Var (lvl2Ix l x)) sp
   VLam x i t   -> Lam x i (quote defs (VVar l : env) (l + 1) ((defs, t) $$ VVar l))
   VPi x i a b  -> Pi x i (quote defs env l a) (quote defs (VVar l : env) (l + 1) ((defs, b) $$ VVar l))
@@ -225,7 +227,7 @@ fvSp def dep = \case
 
 fv :: Defs -> Lvl -> Val -> [Lvl]
 fv def dep = nub . \case
-  VFlex _ sp _ -> fvSp def dep sp
+  VFlex _ sp -> fvSp def dep sp
   VRigid l sp -> l : fvSp def dep sp
   VLam x _ b -> filter (< dep) $ fv def (dep + 1) ((def, b) $$ (VVar dep))
   VPi x _ t b -> fv def dep t ++ filter (< dep) (fv def (dep + 1) ((def, b) $$ (VVar dep)))

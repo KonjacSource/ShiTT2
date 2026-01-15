@@ -68,7 +68,7 @@ rename defs m pren v = go pren v where
 
   go :: PartialRenaming -> Val -> IO Tm
   go pren t = case force defs t of
-    VFlex m' sp _ | m == m'   -> throwIO UnifyError -- occurs check
+    VFlex m' sp | m == m'   -> throwIO UnifyError -- occurs check
                 | otherwise -> goSp pren (Meta m') sp
 
     VRigid (Lvl x) sp -> case IM.lookup x (ren pren) of
@@ -108,6 +108,11 @@ solve defs gamma m sp rhs = do
   let solution = eval defs [] $ lams (reverse $ map snd sp) rhs
   modifyIORef' mcxt $ IM.insert (unMetaVar m) (Solved solution)
 
+solve' :: Defs -> Lvl -> MetaVar -> Spine -> MetaVar -> Spine -> IO ()
+solve' defs gamma m sp m' sp' = do 
+  catch (solve defs gamma m sp (VFlex m' sp'))
+        (\UnifyError -> solve defs gamma m' sp' (VFlex m sp))
+
 unifySp :: Defs -> Env -> Lvl -> Spine -> Spine -> IO ()
 unifySp defs env l sp sp' = case (sp, sp') of
   ([]          , []            ) -> pure ()
@@ -121,14 +126,15 @@ unifySp defs env l sp sp' = case (sp, sp') of
 unify :: Defs -> Env -> Lvl -> Val -> Val -> IO ()
 unify defs env l t u = case (force defs t, force defs u) of
     (VLam _ _ t , VLam _ _ t'    ) -> unify defs (VVar l:env) (l + 1) ((defs, t) $$ VVar l) ((defs, t') $$ VVar l)
-    (t          , VLam _ i t'    ) -> unify defs (VVar l:env) (l + 1) (vApp defs (VVar l:env) t (VVar l) i) ((defs, t') $$ VVar l)
-    (VLam _ i t , t'             ) -> unify defs (VVar l:env) (l + 1) ((defs, t) $$ VVar l) (vApp defs (VVar l:env) t' (VVar l) i)
+    (t          , VLam _ i t'    ) -> unify defs (VVar l:env) (l + 1) (vApp defs t (VVar l) i) ((defs, t') $$ VVar l)
+    (VLam _ i t , t'             ) -> unify defs (VVar l:env) (l + 1) ((defs, t) $$ VVar l) (vApp defs t' (VVar l) i)
     (VU         , VU             ) -> pure ()
     (VPi x i a b, VPi x' i' a' b') | i == i' -> unify defs env l a a' >> unify defs (VVar l:env) (l + 1) ((defs, b) $$ VVar l) ((defs, b') $$ VVar l)
     (VRigid x sp, VRigid x' sp'  ) | x == x' -> unifySp defs env l sp sp'
-    (VFlex m sp _, VFlex m' sp' _) | m == m' -> unifySp defs env l sp sp'
-    (VFlex m sp _, t'            ) -> solve defs l m sp t'
-    (t          , VFlex m' sp' _ ) -> solve defs l m' sp' t
+    (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp defs env l sp sp'
+                                   -- TODO: | otherwise  -> solve' defs l m sp m' sp' 
+    (VFlex m sp , t'             ) -> solve defs l m sp t'
+    (t          , VFlex m' sp'   ) -> solve defs l m' sp' t
     (VFunc f sp , VFunc f' sp'   ) -> unifyFn (f, sp) (f', sp')
     (VHold f sp , VHold f' sp'   ) -> unifyFn (f, sp) (f', sp')
     (VFunc f sp , VHold f' sp'   ) -> unifyFn (f, sp) (f', sp') 

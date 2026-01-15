@@ -85,7 +85,7 @@ mainWith :: IO [String] -> IO (P.Tm, String) -> IO ()
 mainWith getOpt getRaw = do
   reset
   prelude <- parseStringProgram "(Prelude)" preludeSrc
-  predefs <- checkProg "prelude" M.empty prelude
+  predefs <- checkProg preludeSrc M.empty prelude
   defsR <- newIORef predefs
 
   let elab = do
@@ -140,7 +140,7 @@ repl :: IO ()
 repl = do 
   reset
   prelude <- parseStringProgram "(Prelude)" preludeSrc
-  predefs <- checkProg "prelude" M.empty prelude
+  predefs <- checkProg preludeSrc M.empty prelude
   defsR <- newIORef predefs
   repl' predefs
 
@@ -170,6 +170,7 @@ repl' ori_defs = do
         putStrLn "  :l <file>    - load a file"
         putStrLn "  :r           - reset (not reload) to original definitions"
         putStrLn "  :metas       - display unsolved metas"
+        putStrLn "  :meta <id>   - display meta with given id"
         putStrLn "  :func <name> - display function definition"
         putStrLn "  :t <expr>    - typecheck expression"
         putStrLn "  :nf <expr>   - typecheck expression and print its normal form"
@@ -206,6 +207,15 @@ repl' ori_defs = do
       [":metas"] -> do
         defs <- readIORef defsR
         displayMetas defs
+        loop defsR
+      [":meta", mid] -> do 
+        defs <- readIORef defsR
+        mn <- readIO mid
+        let m = lookupMeta $ MetaVar mn
+        case m of 
+          Unsolved -> putStrLn $ "Meta ?" ++ show mn ++ " is unsolved."
+          Solved v -> putStrLn $ "Meta ?" ++ show mn ++ " = " ++ showTm0 (quote defs [] 0 v)
+
         loop defsR
       [":func", fname] -> do 
         -- print function definition

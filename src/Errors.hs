@@ -28,7 +28,8 @@ data ElabError
   | IcitMismatch Icit Icit
   | NotAbsurd Ty  
   | UnsolvedMetaInLambdaCase 
-  | LambdaCaseUnCover 
+  | LambdaCaseUnCover
+  | TypeMismatch (Either String Tm) {-Exp-} Tm {-Act-} Tm
   deriving (Show, Exception)
 
 data DefElabError 
@@ -76,7 +77,14 @@ displayError file (Error cxt e) = do
           "Type is not absurd: " ++ showTm cxt ty
         UnsolvedMetaInLambdaCase ->
           "Unsolved meta in lambda-case expression"
-          
+        LambdaCaseUnCover ->
+          "Lambda-case expression is not cover"
+        TypeMismatch t1 t2 t3 ->
+          "Type mismatch:\n" ++
+          "  Expected: " ++ either id (showTm cxt) t1 ++ "\n" ++
+          "  Inferred: " ++ showTm cxt t2 ++ "\n" ++
+          "  Term: " ++ showTm cxt t3
+
   printf "%s:%d:%d:\n" path linum colnum
   printf "%s |\n"    lpad
   printf "%s | %s\n" lnum (lines file !! (linum - 1))
