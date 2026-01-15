@@ -8,9 +8,9 @@ data Clause = Clause
   , clauseRhs :: Tm
   } deriving Show
 
-data Pattern 
+data Pattern
   = PatVar Name
-  | PatCon Name [(Pattern, Icit)] 
+  | PatCon Name [(Pattern, Icit)]
   deriving Show
 
 type Ty = Tm
@@ -48,3 +48,8 @@ noMetas = \case
   Let _ a t u -> noMetas a && noMetas t && noMetas u
   Meta _ -> False
   InsertedMeta _ _ -> False
+
+type TSpine = [(Tm, Icit)]
+
+applySp :: Tm -> TSpine -> Tm
+applySp = foldl (\t (u, i) -> App t u i)

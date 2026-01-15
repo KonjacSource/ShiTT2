@@ -5,7 +5,6 @@ import Syntax
 import qualified Presyntax as R
 
 type Telescope = [(Name, Icit, Ty)]
-type TSpine = [(Tm, Icit)]
 
 data Def
   = DefFunc FuncDef

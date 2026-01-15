@@ -34,7 +34,6 @@ stripPos = \case
   Hole         -> Hole
   PrintCxt t   -> PrintCxt (stripPos t)
 
-
 data RClause = RClause
   { clausePatternsR :: RPatterns
   , clauseRhsR :: Tm
@@ -42,3 +41,12 @@ data RClause = RClause
 
 data RPattern = RPat Name RPatterns deriving Show
 type RPatterns = [(Either Name Icit, RPattern)]
+
+type Spine = [(Tm, Either Name Icit)]
+
+flattenApp :: Tm -> (Tm, Spine)
+flattenApp t = go t [] where
+  go (App t u i) args = go t ((u, i) : args)
+  go (SrcPos _ t) args =  go t args
+  go (PrintCxt t) args =  go t args
+  go t args           = (t, args)

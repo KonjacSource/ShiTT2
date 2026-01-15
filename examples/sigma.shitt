@@ -1,0 +1,6 @@
+data Exists: {A: U} (P: A -> U) -> U where
+| intro: {A: U} {P: A -> U} (witness: A) (proof: P witness) -> Exists P
+
+def two: Nat = suc (suc zero)
+
+-- def test: Exists (Id two) = intro two (refl two)

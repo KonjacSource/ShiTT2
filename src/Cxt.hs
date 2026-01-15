@@ -11,6 +11,7 @@ import qualified Data.Map as M
 import Definition
 import Control.Monad (join)
 import Debug.Trace (trace)
+import GHC.Stack
 
 -- Elaboration context
 --------------------------------------------------------------------------------
@@ -18,11 +19,11 @@ import Debug.Trace (trace)
 cxtNames :: Cxt -> [Name]
 cxtNames = fmap (\(x, _, _) -> x) . types
 
-showVal :: Cxt -> Val -> String
+showVal :: HasCallStack => Cxt -> Val -> String
 showVal cxt v =
   prettyTm 0 (cxtNames cxt) (quoteCxt cxt v) []
 
-showTm :: Cxt -> Tm -> String
+showTm :: HasCallStack => Cxt -> Tm -> String
 showTm cxt t = prettyTm 0 (cxtNames cxt) t []
 
 showCxt :: Cxt -> String

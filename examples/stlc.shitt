@@ -64,6 +64,7 @@ def applySub : {D G : Ctx} {A : Ty} -> Sub D G -> Tm G A -> Tm D A
 | (sshift g A) (var (is i)) = wk (applySub g (var i))
 | (sshift g A) (wk t) = wk (applySub g t)
 
+{- 
 -- No need to prove preservation now.
 data step1 : {A : Ty} -> Tm empty A -> Tm empty A -> U where
 | stApp : {A B : Ty} (t1 : Tm (extend empty A) B) (t2 : Tm empty A) -> step1 (app (lam t1) t2) (applySub (sextend sid t2) t1)
@@ -85,3 +86,4 @@ def progress : {A : Ty} (t : Tm empty A) -> Progress t
     | (prDone t1 (vlam t)) = prStep _ _ (stApp t t2)
     end
 
+-}

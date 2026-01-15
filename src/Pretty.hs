@@ -12,6 +12,7 @@ import Evaluation
 import Metacontext
 import Syntax
 import Cxt.Type (Defs, Cxt (Cxt))
+import GHC.Stack (HasCallStack)
 
 --------------------------------------------------------------------------------
 
@@ -31,7 +32,7 @@ letp  = 0  :: Int -- let, lambda
 par :: Int -> Int -> ShowS -> ShowS
 par p p' = showParen (p' < p)
 
-prettyTm :: Int -> [Name] -> Tm -> ShowS
+prettyTm :: HasCallStack => Int -> [Name] -> Tm -> ShowS
 prettyTm prec = go prec where
 
   bracket :: ShowS -> ShowS
@@ -50,10 +51,10 @@ prettyTm prec = go prec where
     (ns :> n , bds :> Defined ) -> goBDS appp ns m bds
     _                           -> error "impossible"
 
-  go :: Int -> [Name] -> Tm -> ShowS
+  go :: HasCallStack => Int -> [Name] -> Tm -> ShowS
   go p ns = \case
-    Var (Ix x)                -> ((ns !! x)++)
-
+    Var (Ix x)   | x >= 0     -> ((ns !! x)++)
+                 | otherwise -> (("<"++ show x ++ ">")++)
     App t u Expl              -> par p appp $ go appp ns t . (' ':) . go atomp ns u
     App t u Impl              -> par p appp $ go appp ns t . (' ':) . bracket (go letp ns u)
 
@@ -62,6 +63,7 @@ prettyTm prec = go prec where
                                      (' ':) . lamBind x i . goLam (ns:>x) t
                                    goLam ns t =
                                      (". "++) . go letp ns t
+    LamCase cls               -> ("lambdacase" ++) -- TODO
 
     U                         -> ("U"++)
     Absurd t                  -> par p appp $ ("absurd "++) . go atomp ns t
