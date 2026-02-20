@@ -1,29 +1,54 @@
-mutual 
-
-  data A : U 
-  data B : A -> U 
-  def f : (a : A) -> B a -> Unit
-
+mutual
+  data AA : U
+  data BB : AA -> U
 begin
 
-  data A 
-  | a1 : A 
+  data AA  
+  | a : AA
 
-  data B 
-  | b1 : B a1 
+  data BB  
+  | b : BB a
 
-  def f
-  | a1 b1 = tt
-  
-  data A 
-  | a2 : (f : (a : A) -> B a -> U) -> f a1 b1 -> A
-  
-  def f 
-  | (a2 _ _) x = absurd x
+  data AA  
+  | f : BB a -> AA
+
+  data AA
+  | g : BB (f b) -> AA
+
+  data BB  
+  | h : (x : BB a) -> BB (f x)
 
 end
 
-def g : A -> Unit
-| a1 = tt
-| (a2 f x) = tt
+-- As axioms
+def AAM : AA -> U
+def BBM : {x : AA} -> AAM x -> BB x -> U
+def aM : AAM a
+def fM : {x : BB a} -> BBM aM x -> AAM (f x)
+def bM : BBM aM b
+def gM : {x : BB (f b)} -> BBM (fM bM) x -> AAM (g x)
+def hM : {x : BB a} (xM : BBM aM x) -> BBM (fM xM) (h x)
+
+mutual 
+
+  def elimA : (x : AA) -> AAM x
+  def elimB : {x : AA} (y : BB x) -> BBM (elimA x) y
+
+begin
+
+  def elimA
+  | a = aM
+  def elimB 
+  | b = bM
+  
+  def elimA 
+  | (f x) = fM (elimB x)
+
+  def elimA
+  | (g x) = gM (elimB x) 
+
+  def elimB
+  | (h y) = hM (elimB y)
+
+end
 
