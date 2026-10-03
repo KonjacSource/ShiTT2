@@ -1,0 +1,131 @@
+cabal-version: 2.2
+
+-- This file has been generated from package.yaml by hpack version 0.37.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           OhTT
+version:        0.1.0.0
+description:    TODO
+homepage:       https://github.com/githubuser/OhTT#readme
+bug-reports:    https://github.com/githubuser/OhTT/issues
+author:         Author name here
+maintainer:     example@example.com
+copyright:      2026 Author name here
+license:        BSD-3-Clause
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/OhTT
+
+library
+  exposed-modules:
+      Common
+      Cxt
+      Cxt.Type
+      Debug
+      Definition
+      DefinitionElaboration
+      Elaboration
+      Errors
+      Evaluation
+      Metacontext
+      Parser
+      Presyntax
+      Pretty
+      Syntax
+      Test.Coverage
+      Test.PatternMatching
+      Unification
+      Value
+  other-modules:
+      Paths_OhTT
+  autogen-modules:
+      Paths_OhTT
+  hs-source-dirs:
+      src
+  default-extensions:
+      DerivingVia
+      DeriveAnyClass
+      FlexibleContexts
+      GeneralizedNewtypeDeriving
+      LambdaCase
+      OverloadedStrings
+      PatternSynonyms
+      StandaloneDeriving
+      Strict
+      TupleSections
+      ViewPatterns
+      GADTs
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-matches -Wno-name-shadowing -Wno-missing-signatures -Wno-missing-export-lists -Wno-unused-imports -Wno-unused-local-binds -Wno-incomplete-uni-patterns -Wno-unused-do-bind -Wno-orphans
+  build-depends:
+      base >=4.7 && <5
+    , containers
+    , megaparsec
+  default-language: Haskell2010
+
+executable OhTT-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_OhTT
+  autogen-modules:
+      Paths_OhTT
+  hs-source-dirs:
+      app
+  default-extensions:
+      DerivingVia
+      DeriveAnyClass
+      FlexibleContexts
+      GeneralizedNewtypeDeriving
+      LambdaCase
+      OverloadedStrings
+      PatternSynonyms
+      StandaloneDeriving
+      Strict
+      TupleSections
+      ViewPatterns
+      GADTs
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-matches -Wno-name-shadowing -Wno-missing-signatures -Wno-missing-export-lists -Wno-unused-imports -Wno-unused-local-binds -Wno-incomplete-uni-patterns -Wno-unused-do-bind -Wno-orphans -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      OhTT
+    , base >=4.7 && <5
+    , containers
+    , megaparsec
+  default-language: Haskell2010
+
+test-suite OhTT-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_OhTT
+  autogen-modules:
+      Paths_OhTT
+  hs-source-dirs:
+      test
+  default-extensions:
+      DerivingVia
+      DeriveAnyClass
+      FlexibleContexts
+      GeneralizedNewtypeDeriving
+      LambdaCase
+      OverloadedStrings
+      PatternSynonyms
+      StandaloneDeriving
+      Strict
+      TupleSections
+      ViewPatterns
+      GADTs
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-matches -Wno-name-shadowing -Wno-missing-signatures -Wno-missing-export-lists -Wno-unused-imports -Wno-unused-local-binds -Wno-incomplete-uni-patterns -Wno-unused-do-bind -Wno-orphans -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      OhTT
+    , QuickCheck
+    , base >=4.7 && <5
+    , containers
+    , hspec
+    , megaparsec
+  default-language: Haskell2010

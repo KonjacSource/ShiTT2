@@ -1,0 +1,86 @@
+-- STLC
+
+mutual 
+
+  data Ctx : U 
+  data Ty : U
+  data Tm : (G : Ctx) -> Ty -> U
+  data Ix : Ctx -> U
+  def lookup : {G : Ctx} -> Ix G -> Ty 
+
+begin
+
+  data Ctx 
+  | empty : Ctx 
+  | extend : (G : Ctx) -> Ty -> Ctx
+  
+  data Ty
+  | top : Ty 
+  | arr : Ty -> Ty -> Ty
+
+  data Tm 
+  | tt : {G : Ctx} -> Tm G top
+  | lam : {G : Ctx} {A B : Ty} -> Tm (extend G A) B -> Tm G (arr A B)
+  | app : {G : Ctx} {A B : Ty} -> Tm G (arr A B) -> (Tm G A) -> Tm G B
+  | var : {G : Ctx} (i : Ix G) -> Tm G (lookup i)
+  | wk : {G : Ctx} {A B : Ty} -> Tm G A -> Tm (extend G B) A
+  
+  data Ix 
+  | iz : {G : Ctx} {A : Ty} -> Ix (extend G A)
+  | is : {G : Ctx} {A : Ty} -> Ix G -> Ix (extend G A)
+
+  def lookup
+  | {extend _ A} iz = A 
+  | {extend _ A} (is i) = lookup i
+  | {empty} x = absurd x
+
+end
+
+data Val : {A : Ty} -> Tm empty A -> U where
+| vlam : {A B : Ty} (t : Tm (extend empty A) B) -> Val (lam t)
+| vtt  :  Val tt
+
+-- Substitution. 
+data Sub : Ctx -> Ctx -> U where
+| sempty : {G : Ctx} -> Sub G empty
+| sid    : {G : Ctx} -> Sub G G
+| sextend : {D G : Ctx} {A : Ty} -> Sub D G -> Tm D A -> Sub D (extend G A)
+| sshift : {D G : Ctx} -> Sub D G -> (A : Ty) -> Sub (extend D A) (extend G A)
+
+def fromEmp : {G : Ctx} {A : Ty} -> Tm empty A -> Tm G A
+| {empty} t = t
+| {extend G B} t = wk (fromEmp t)
+
+def applySub : {D G : Ctx} {A : Ty} -> Sub D G -> Tm G A -> Tm D A
+| sempty t = fromEmp t
+| sid t = t
+| g tt = tt
+| g (lam t) = lam (applySub (sshift g _) t)
+| g (app t1 t2) = app (applySub g t1) (applySub g t2)
+| (sextend g a) (var iz) = a
+| (sextend g a) (var (is i)) = applySub g (var i)
+| (sextend g a) (wk t) = applySub g t
+| (sshift g A) (var iz) = var iz
+| (sshift g A) (var (is i)) = wk (applySub g (var i))
+| (sshift g A) (wk t) = wk (applySub g t)
+
+-- No need to prove preservation now.
+data step1 : {A : Ty} -> Tm empty A -> Tm empty A -> U where
+| stApp : {A B : Ty} (t1 : Tm (extend empty A) B) (t2 : Tm empty A) -> step1 (app (lam t1) t2) (applySub (sextend sid t2) t1)
+| stApp1 : {A B : Ty} (t1 T1 : Tm empty (arr A B)) (t2 : Tm empty A) -> step1 t1 T1 -> step1 (app t1 t2) (app T1 t2)
+| stApp2 : {A B : Ty} (t1 : Tm empty (arr A B)) (t2 T2 : Tm empty A) -> step1 t2 T2 -> step1 (app t1 t2) (app t1 T2)
+
+data Progress : {A : Ty} -> Tm empty A -> U where
+| prStep : {A : Ty} (t T : Tm empty A) -> step1 t T -> Progress t
+| prDone : {A : Ty} (t : Tm empty A) -> Val t -> Progress t 
+
+-- Progress 
+def progress : {A : Ty} (t : Tm empty A) -> Progress t
+| tt = prDone tt vtt
+| (lam t) = prDone (lam t) (vlam t)
+| (var x) = absurd x
+| (app t1 t2) =
+    match progress t1 with 
+    | (prStep t1 T1 st1) = prStep _ _ (stApp1 t1 T1 t2 st1)
+    | (prDone t1 (vlam t)) = prStep _ _ (stApp t t2)
+    end

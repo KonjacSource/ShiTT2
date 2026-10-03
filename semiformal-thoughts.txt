@@ -1,0 +1,272 @@
+## Primitives
+
+_=_ {A : U} : A → A → Prop
+cast : (A B : U) (h : A = B) → A → B
+
+apU {A : U} {x y : A} : (f : A → U) → x = y → f x = f y 
+apd {A : U} {B : A → U} {x y : A} : (f : (x : A) → B x) (h : x = y) → cast (B x) (B y) (apU B h) (f x) = f y
+
+-- This is a little bit twisted version, but with it, we don't need to define apU for each QIT elim. 
+apd {A : U} {B : A → U} {x y : A} : 
+  (f : (x : A) → B x) (h : x = y) → cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (f x) = f y
+
+-- Note ahead. if `f` is a QIT large elimination defined by pattern matching, we require `apU` clause instead of `apd` clause. 
+--             and we automatically generate `apd` clause for `f` from `apU` clause. 
+-- `ap` can be defined by `apd`
+-- `subst` can be defined by `ap` and `cast`
+
+## Typing Contexts
+
+Γ for variables
+Ξ for signatures (definitions)
+E(D) for path constructors on D (forall QIT D)
+O for QIT-eliminating LHS
+
+Γ ::= ε ∣ Γ, x : A 
+Ξ ::= ε 
+    | Ξ, data ... 
+    | Ξ, definition ... 
+    | Ξ, APD (f xs) e -- APD is defined for what function, we don't need rhs, since irrelevence
+
+E ::= ε
+    | E, D ↦ {c Δ : a ~_{D vs} b} -- D is a QIT, c is constructor name
+
+O ::= ε
+    | O, (f, ψ, A, B) -- s.t. [ψ] ⊢ f Ψ : Π A B, where ψ is a list of pattern shape terms, [ψ] is the context given by ψ
+
+
+c is a QIT::= ε
+    | O, (f, ψ, A, B) -- s.t. [ψ] ⊢ f Ψ : Π A B, where ψ is a list of pattern shape terms, [ψ] is the context given by ψ
+
+
+c is a QIT constructor 
+[ψ] ⊢ f ψ : Π A B
+--------------------------------------------------------------------- We should do this while checking coverage
+Ξ ; Ε ; O ⊢ chk { f ψ (c xs) = rhs } ≈> Ξ; E ; O, f ψ : Π A B
+
+{f ψ} ∈ O
+------------------------------------------------------ But this is also a coverage checking
+Ξ; E; O ⊢ chk { apd (f ψ) e = rhs } ≈> Ξ; E; O\{f ψ}
+
+We hope this rule can be more flexible to support the following case
+
+{f (x : ℕ)} ∈ O
+-----------------------------------------------------------------------------
+Ξ; E; O ⊢ chk { apd (f zero) e = rhs ; apd (f (suc x)) e = rhs' } ≈> Ξ; E; O\{f ψ}
+
+-- 
+
+In Norell's style, not Cockx's. I am not ready for case tree.
+
+data CoverRes
+  = CoverOk [Pattern] -- initial patterns for checking QIT congr (No need this actually)
+  | CoverStuck Lvl -- Which variable is stuck
+  | CoverFail [(Cxt, Spine)] -- Meet a dead end
+
+data MatchRes
+  = MatchOK Ctx
+  | MatchStuck Lvl 
+  | MatchFail
+
+> covering([LHS], sp) ==> CoverRes
+> match(LHS, sp) ==> MatchRes
+
+
+match(Cs, vs) ==> MatchStuck x
+x's type is a QIT
+split x => vs'
+covering(Cs, vs ++ vs') ==> CoverOk ps''
+ps = ps' ++ ps'' 
+--------------------------------
+covering(Cs, vs) ==> CoverOk ps
+
+
+                    covering(Cs, vs) ==> CoverOk ps
+---------------------------------------------------------------------------
+  Ξ; E; O => chk { def f : A where [Cs := rhs] } => Ξ; E; O ⊎ f ps
+
+A certain clause of apd function must compatible with the current `O`
+i.e.
+
+    f ps matchable in O 
+    check rhs with f guarded by ps 
+-------------------------------------------------------------------
+  Ξ; E; O => chk { apd (f ps) e := rhs } => Ξ; E; O
+
+And then, at the end of the file/module, we check coverage for apd, with `O`
+i.e.
+
+    for each f ps in O, 
+          covering("clauses of apd involving f", [f ps; e]) ==> CoverOk ps'
+    where e is a fresh var 
+          and I don't care if ps' == [] or not, since we are in set-level TT
+----------------------------------------------------------------------------
+  Ξ; E; O => cover-apd => Ξ; E; {}
+
+
+Syntax limitation: QIT patterns cannot be nested?
+
+Not really, but it would be more complicated
+
+consider
+data I where 
+  i0 i1 : I 
+  seg : i0 = i1
+
+data D where 
+  mk : I → D 
+
+f : D → xxx 
+f (mk i0) = ... 
+f (mk i1) = ...
+
+apd f (apd mk seg) =
+
+-----------------------------------------
+Extending cast and pattern matching for indexed inductive types
+
+<s>
+for a indexed type 
+
+data Vec A : ℕ → Type where 
+  nil : Vec _ 0 
+  cons : A → Vec _ n → Vec _ (suc n)
+  + castXVec : {n m} (p : n = m) → Vec A n → Vec A m
+
+p : Vec A m = Vec A n
+----------------------
+p.ix0 : m = n
+
+cast (Vec A 0)       (Vec A n) p nil         = castXVec (p.ix0) nil 
+cast (Vec A (suc m)) (Vec A n) p (cons x xs) = castXVec (p.ix0) (cons x xs)
+
+* Can we have 
+*   p : m = n      m ≡ n
+* ------------------------ ?
+*   castXVec p t ≡ t
+* The answer must be yes, since congruence.
+
+
+Q: Cast for equality?
+A: No need to compute, since irrelevence
+
+* Extending DPM
+
+f : (n : ℕ) (v : Vec A n) → P n v
+f .0        nil         = rhs₀
+f .(suc n)  (cons x xs) = rhs₁
+f n         (castXVec {m .n} p xs) = cast (apd₂ ... : P m xs = P n (castXVec p xs)) (f m xs)
+  where n : ℕ
+        p : m = n
+        xs : Vec A m 
+
+
+data Vec A : ℕ → Type where 
+  nil : Vec _ 0 
+  cons : A → Vec _ n → Vec _ (suc n)
+  castXVec : {n m} (p : n = m) → Vec A n → Vec A m
+
+head : ∀ {n} {a} {A : Set a} → Vec A (suc n) → A
+head (cons x _) = x
+head (castXVec {m .(suc n)} (p : m = suc n) (xs : Vec A m)) = cast (? : A = A) (head (? : Vec A (suc ?)))
+
+cannot extend, instead,
+
+head (castXVec {.(suc m) .(suc n)} (p : suc m = suc n) (xs : Vec A (suc m))) = head xs
+
+or
+
+head (castXVec {m .(suc n)} p xs) = case m of 
+                                      | zero => abs
+                                      | suc m => head xs
+
+--              ↑ forced by p
+-- 
+
+data Im (f : A → B) : B → Type where 
+  imf : (x : A) → Im (f x)
+  + castXIm : x = y → Im f x → Im f y
+
+invf : (y : B) → Im f y → A 
+invf .(f x) (imf x) = x 
+invf .y     (castXIm (p : x = y) (i : Im f x)) = invf i
+
+data Id (x : A) : A → Type where 
+  refl : Id x x 
+  + castXId {a b} : a = b → Id x a → Id x b
+
+sucInj : ∀ {x y} → Id (suc x) (suc y) → Id x y
+sucInj refl = refl 
+sucInj (castXId (p : a = suc y) (e : Id (suc x) a)) = ???
+force p, use injectivity of suc
+sucInj (castXId (p : b = suc y) (castXId (q : a = b) (e : Id (suc x) a))) = sucInj (castXId (q·p) e)
+sucInj (castXId (p : .(suc x) = suc y) (refl : Id (suc x) (suc x))) = cast (ap (Id x) (suc-inj p) : Id x x = Id x y) (sucInj refl)
+</s>
+
+> No need to extend constructors 
+cast (_ : A = A) x = x saves all?
+
+Benefits from castX:
+- f (cast _ con) can be computed, e.g.
+  sucInj (cast (p : Id (suc x) (suc x) = Id (suc x) (suc y)) (refl (suc x))) = cast ... (sucInj refl (suc x))
+  cast-refl cannot do this, because Id (suc x) (suc x) ≢ Id (suc x) (suc y)
+
+To do this, is there another way beside introducing castX?
+
+G : ∀ {a} (h : D a) → R a h
+D is a data type with injectivity over a 
+-------------------------------------------------------------------------------------------------------------
+G {y} (cast (D x) (D y) p (h : D x)) = cast (_ : R x h = R y (cast p h)) (G {x} h)
+
+This is propositional provable with apd₂
+
+* Observational inductive proposition?
+
+data _~_ : Type → Type → Prop where 
+  refl : A ~ A 
+
+cast : (A B : Type) → A ~ B → A → B 
+cast ..A ..A ~refl x = x 
+
+give a computation rule 
+
+cast A A _ x = x
+
+data Even : ℕ → Prop where 
+  e0 : Even 0
+  es2 : Even n → Even (suc (suc n))
+
+f : (n : ℕ) → Even n → ... 
+f ..zero       ~e0       = ...
+f ..(s (s n))  ~(es2 en) = ...
+
+the idea is the computation do not care about ~patterns.
+
+And this some how needs to be an ice1k's simply indexed type
+
+---------------------------------------------------------------------------------------------------------
+
+Implementation Note
+
+apd {A : U} {B : A → U} 
+    (fps : (x : A) → B x)
+    {x y : A}  
+    (h : x =_A y) : 
+   cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (fps x) =_{B y} fps y
+No nested patterns supported yet. A QIT pattern must at top
+It seems we must consider `apd` as `apd-f-ps` defined for each function `f` and pattern `ps`.
+So the type is also dependent on `f` and `ps`, thus we don't need `A` and `B` as parameters.
+apd (fps : (x : A) → B x) {x y : A} (h : x =_A y) : cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (fps x) =_{B y} fps y
+
+A problem is that we want to make `ps` can be further matched. e.g.
+
+f : Bool → I → ... 
+f b i0 = ...
+f b i1 = ... 
+
+-- opening clause
+-- apd (f b) e = ... 
+
+-- and we want the following clause is enough 
+apd (f true) e = ...
+apd (f false) e = ...

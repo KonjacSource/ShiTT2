@@ -1,0 +1,112 @@
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE DeriveFunctor #-}
+
+module Syntax where
+
+import Common
+import qualified Data.Map as M
+
+data Clause = Clause
+  { clausePatterns :: [(Pattern, Icit)]
+  , clauseRhs :: Tm
+  } deriving Show
+
+-- | Type argument `a` should be `Empty` for normal pattern or `()` for pattern with mark
+data Pattern' a 
+  = PatVar Name
+  | PatCon Name (PatternTele a)
+  | PatFunc Name (PatternTele a) -- apd (f ps) e
+  | PatMark a
+  deriving (Functor, Show)
+
+type PatternArg a = (Pattern' a, Icit)
+type PatternTele a = [PatternArg a]
+type Pattern = Pattern' Empty
+type PatternWithMark = Pattern' () 
+
+toPatternWithMark :: Pattern -> PatternWithMark
+toPatternWithMark = fmap exfalso
+
+noMark :: PatternWithMark -> Maybe Pattern
+noMark = \case
+  PatMark () -> Nothing
+  PatVar x -> Just $ PatVar x
+  PatCon c ps -> PatCon c <$> mapM (\(p, i) -> (,) <$> noMark p <*> pure i) ps
+  PatFunc f ps -> PatFunc f <$> mapM (\(p, i) -> (,) <$> noMark p <*> pure i) ps
+
+data Empty 
+exfalso :: Empty -> a
+exfalso = \case
+
+instance Show Empty where 
+  show = exfalso
+
+type Ty = Tm
+
+data Tm
+  = Var Ix
+  | Call Id -- ^ Call functions or datatypes or constructor
+  | Lam Name Icit Tm
+  | App Tm Tm Icit
+  | U
+  | Absurd Tm
+  | LamCase [Clause]
+  | Pi Name Icit Ty Ty
+  | Let Name Ty Tm Tm
+  | Meta MetaVar
+  | InsertedMeta MetaVar [BD]
+
+  -- | Prop 
+  | PropTm -- A term of a proposition type
+  | Prim Prim
+  | Proj Tm Name
+  deriving Show
+
+data Prim 
+  = Apd
+  -- apd {A : U} {B : A → U} {x y : A} : (f : (x : A) → B x) (h : x = y) → cast (B x) (B y) (apU B h) (f x) = f y 
+  | Cast
+  -- cast [A B : U] (p : A = B) (a : A) : B
+  | Oeq
+  -- eq {A : U} (x y : A) : U
+  | Rfl
+  -- rfl {A : U} (x : A) : x ~{A} x
+  deriving (Show, Eq)
+
+-- to control the type of cast
+-- cast (A B : U) (p : A = B) (a : A) : B
+-- or
+-- cast {A B : U} (p : A = B) (a : A) : A
+casticit :: Icit
+casticit = Impl
+
+eApp :: Tm -> Tm -> Tm
+eApp t u = App t u Expl
+
+iApp :: Tm -> Tm -> Tm
+iApp t u = App t u Impl
+
+noMetas :: Tm -> Bool
+noMetas = \case
+  Var _ -> True
+  Call _ -> True
+  Lam _ _ t -> noMetas t
+  App t u _ -> noMetas t && noMetas u
+  U -> True
+  Absurd _ -> True
+  LamCase cls -> all (\(Clause ps rhs) -> noMetas rhs) cls
+  Pi _ _ a b -> noMetas a && noMetas b
+  Let _ a t u -> noMetas a && noMetas t && noMetas u
+  Meta _ -> False
+  InsertedMeta _ _ -> False
+  
+  -- Prop -> True
+  PropTm -> True 
+  Prim _ -> True
+  Proj t _ -> noMetas t
+
+
+type TSpine = [(Tm, Icit)]
+
+applySp :: Tm -> TSpine -> Tm
+applySp = foldl (\t (u, i) -> App t u i)

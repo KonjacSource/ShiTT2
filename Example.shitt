@@ -1,0 +1,21 @@
+def cong : {A B : U} {x y : A} (f : A -> B) -> Id x y -> Id (f x) (f y) 
+| f (refl x) = refl (f x)
+
+def addAssoc : {a b c : Nat} -> Id (add a (add b c)) (add (add a b) c) 
+| {zero}  = refl _ 
+| {suc a} = cong suc addAssoc
+
+def addIdR : {a : Nat} -> Id a (add a zero)
+| {zero} = refl _
+| {suc a} = cong suc addIdR
+
+def addSucR : {a b : Nat} -> Id (add a (suc b)) (suc (add a b))
+| {zero} = refl _ 
+| {suc a} = cong suc addSucR
+
+def addComm : {a b : Nat} -> Id (add a b) (add b a)
+| {zero}  {b} = addIdR 
+| {suc a} {b} = 
+    trans (suc (add b a))
+    (cong suc addComm)
+    (symm addSucR)

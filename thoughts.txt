@@ -1,0 +1,248 @@
+Solution to transport hell 
+
+in OTT [Observational Equality, Not for Good]
+
+All of our motivation is to formalize type theoyr in "TT in TT" style, and try to prove meta-properties.
+
+1. we can have the rules like 
+
+cast-refl  : cast A A _ t => t 
+cast-trans : cast B C _ (cast A B _ t) => cast A C _ t     
+-^ I am not very sure about this, since it is not shown in any papers
+
+
+2. in OTT, some are easier, some are still tricky
+
+- easy part:
+  * definitional uip, no need to copy crazy paths from infoview
+  * cast-refl, without this, we need an extra subst
+  * cast-trans
+
+
+- still tricky:
+
+* how to prove 
+
+f : (x : A) -> B[x]
+u v : A
+h : u = v
+------------------------------------ 
+cast B[u] B[v] (ap B v) (f u) = f v 
+
+* solution: use apd
+
+...
+------------------------
+apd f h : cast B[u] B[v] (ap B v) (f u) = f v 
+
+but when f : (x : A) (y : B[x]) -> C[x, y], things get more complicated
+
+if we want to show
+p : x = x'
+q : cast B[x] B[x'] p y = y'
+----------------------------------------------
+cast C[x, y] C[x', y'] (...) (f x y) = f x' y'
+
+we'd need an apd2 function and so on.
+
+* how to prove 
+
+b = cast A B _ a
+
+there might also be cast in b, so sym+apd not working.
+
+* solution
+
+we chose to always move cast from RHS to LHS, with the following lemma
+
+TS : cast B A (sym h) b = a -> b = cast A B h a
+
+this is still a manual work, both in MLTT and OTT.
+
+
+3. solve them once and for all
+
+The irrelevance of equalities in OTT hence we do not need to store any equalities during type-checking.
+We do not care the proof term of an equality, what we care is that this equality is true.
+
+- Double mode prover, a prover combines ETT and OTT
+
+* How? 
+
+Every OTT term can be seen as an ETT term. When you have a hole with a = b shape 
+
+?h : a = b 
+
+You can enter ETT mode to prove it with tactics.
+
+In ETT mode we have equality reflection, hence all the cast can be eliminated.
+
+* Decidable type check?
+
+defeq in OTT mode (Γ ⊢ a ≡ b) is still decidable!
+ 
+
+* Some rules
+
+Γ ⊩ h : a = b
+---------------- enter ETT mode
+Γ ⊢ by h : a = b
+
+Γ ⊩ h : a = b
+-------------- reflection
+Γ ⊩ a ≡ b
+
+Trebor told me that ETT prover is not very user-friendly.
+
+Anyway, this is a possible solution
+
+4. face the problem, but with the help of tactic
+
+we want to solve apd problem
+
+f g : (x : A) (y : B[x]) -> C[x, y]
+x x' : A 
+y : B[x]
+y' : B[x']
+h : C[x, y] = C[x', y']
+-------------------------
+cast C[x, y] C[x', y'] h (f x y) = g x' y'
+
+should be able to convert to the following sub-goals
+
+  1.
+    ...
+    -----
+    f = g
+
+  2.
+    ...
+    ------ 
+    x = x' 
+
+  3.
+    ...
+    ?2 : x = x' 
+    ---------------
+    cast B[x] B[x'] (ap B ?2) y = y'
+
+5. On elimination syntax of quotient inductive types
+
+
+quotient data Q (A : Type) (r : A -> A -> Type) : Type where 
+| mk : A -> Q A r
+| eq : (x y : A) -> r x y -> mk x = mk y
+
+elimQ : (A : Type) (r : A -> A -> Type)
+        (P : Q A r -> Type)
+        (xd : (x : A) -> P (mk x))
+        (apdeq : (x y : A) (h : r x y) -> 
+                    cast (P (mk x)) (P (mk y)) (ap P (eq x y h)) (xd x)
+                  = xd y) -> 
+        ----------------------------------------------------------------
+        (x : Q A r) -> P x
+elimQ A r P xd apdeq (mk x) = xd x
+/ elab should be able to see that elimQ is matching on its 6th argument
+/ apd : (f : (x : A) -> B[x]) (e : u = v) -> cast B[u] B[v] (ap B e) (f u) = f v
+apd (elimQ A r P xd apdeq) (eq x y h) = 
+  -- :  cast (P (mk x)) (P (mk y)) 
+  --         (ap P (eq x y h)) 
+  --         (elimQ A r P xd apdeq (mk x)) 
+  -- =  elimQ A r P xd apdeq (mk y)
+  -- can't use apd (elimQ xxx) here
+  
+* How to handle multi-elim
+
+In Agda, we can eliminate multiple arguments at once, e.g.
+
+lt (suc m) (suc n) = lt m n
+
+apd : (f : Elim A a.B) (e : u =_A v) -> cast ...
+lt : N -> N -> Type
+lt : Elim N (N -> Type)
+forall m, lt m : Elim N Type 
+or 
+forall m, lt (suc m) : Elim N Type 
+^ sometimes this is necessary
+
+if   f zero : A (A is not a function)
+and  f (suc m) : Elim Q a.B
+
+which requires an apd clause for 
+apd (f (suc m)) (e : u =_Q v) = ... 
+
+in the pov of apd , Elim is an indexed inductive type.
+
+elimQ A r P xd apdeq : Elim (Q A r) P
+f : (x : Q A r) -> (elimQ A r P F Fcong) x
+f : Elim (Q A r) (elimQ A r P F Fcong)
+
+better notation
+'(x : A) -> B = Elim A (x.B)
+
+
+-------------------------------------------------------------
+
+'(x : A) -> B 
+
+data I where 
+  i0 i1 : I 
+  seg : i0 = i1
+
+=============== 
+  F : I -> Bool -> Bool
+  F i0 true = true 
+  F i0 false = false
+  F i1 true = true 
+  F i1 false = false
+
+  find elimination F : 'I -> Bool -> Bool
+  missing apd clause
+    apd {a} {b} F (e : a =_I b) : F a = F b
+
+===============
+  f : I -> I -> Bool
+  f i0 i0 = True
+  f i0 i1 = False
+  f i1 i0 = True
+  f i1 i1 = False
+
+  find elimination f : 'I -> I -> Bool
+  missing apd clause
+    apd {a} {b} f (e : a =_I b) : f a = f b 
+
+  find elimination f (x : I) : 'I -> Bool
+  missing apd clause 
+    apd {a} {b} (f x) (e : a =_I b) : f x a = f x b
+
+  x can be further eliminated in apd
+    apd {a} {b} (f i0) e = ...
+    apd {a} {b} (f i1) e = ...
+
+  no need to proof congruence for apd
+
+in apd POV, f and F are constructors in pattern matching sense
+we don't need to prove congruence if the target of elimination is a prop
+
+Intuition: 
+  '(x : A) -> B is an open indexed inductive type, indexed by A and x.B,
+                each functor defined with pattern matching on A is a constructor to this type.
+  a =_A b       is an indexed inductive type over A, 
+                each quotient path is a new constructor to this type.
+  apd           is an open function eliminating '(x : A) -> B and a =_A b, for quotient inductive type A.
+                when '(x : A) -> B is extended, the apd function should also be extended with new clauses, 
+                which corresponds to the congruence.
+
+Guardness on apd to prevent circular reasoning:
+
+apd (f xs) e = rhs 
+
+<s>
+would be translated to
+apd (f xs) e = apd-f xs e
+apd-f xs e = rhs
+
+guard on xs, or simply just ban the using of `apd (f ...)` and `apd (g ...)` for other function `g` which is mutually defined with `f`.
+</s>
+
+we should make sure every `f` call is guarded by xs, as in cubical agda.

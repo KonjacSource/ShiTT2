@@ -1,0 +1,26 @@
+data Bool : U where
+| true : Bool
+| false : Bool
+
+quotient data I : U where 
+| i0 : I 
+| i1 : I 
+| seg : i0 ~ i1 
+
+def f : Bool -> I -> Nat
+| true i0 = zero 
+| true i1 = zero
+| false i0 = zero
+| false i1 = zero
+
+def g : Bool -> I -> Nat
+| true i0 = zero 
+| true i1 = zero
+| false h = zero
+
+def apd 
+| (f false) seg = refl
+| (f true) seg = refl
+
+def apd 
+| (g true) seg = refl

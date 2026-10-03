@@ -1,0 +1,106 @@
+
+module Pretty (prettyTm, showTm0, displayMetas, showDefs) where
+
+import Control.Monad
+import Data.IORef
+import Text.Printf
+
+import qualified Data.IntMap.Strict as IM
+
+import Common
+import Evaluation
+import Metacontext
+import Syntax
+import Cxt.Type (Defs, Cxt (Cxt))
+import GHC.Stack (HasCallStack)
+import Definition
+import qualified Data.Map as M
+
+--------------------------------------------------------------------------------
+
+fresh :: [Name] -> Name -> Name
+fresh ns "_" = "_"
+fresh ns x | elem x ns = fresh ns (x ++ "'")
+           | otherwise = x
+
+-- printing precedences
+atomp = 3  :: Int -- U, var
+appp  = 2  :: Int -- application
+pip   = 1  :: Int -- pi
+letp  = 0  :: Int -- let, lambda
+
+-- Wrap in parens if expression precedence is lower than
+-- enclosing expression precedence.
+par :: Int -> Int -> ShowS -> ShowS
+par p p' = showParen (p' < p)
+
+prettyTm :: HasCallStack => Int -> [Name] -> Tm -> ShowS
+prettyTm prec = go prec where
+
+  bracket :: ShowS -> ShowS
+  bracket ss = ('{':).ss.('}':)
+
+  piBind ns x Expl a = showParen True ((x++) . (" : "++) . go letp ns a)
+  piBind ns x Impl a = bracket        ((x++) . (" : "++) . go letp ns a)
+
+  lamBind x Impl = bracket (x++)
+  lamBind x Expl = (x++)
+
+  goBDS :: Int -> [Name] -> MetaVar -> [BD] -> ShowS
+  goBDS p ns m bds = case (ns, bds) of
+    ([]      , []             ) -> (("?"++show m)++)
+    (ns :> n , bds :> Bound   ) -> par p appp $ goBDS appp ns m bds . (' ':) . (n++)
+    (ns :> n , bds :> Defined ) -> goBDS appp ns m bds
+    _                           -> error "impossible"
+
+  go :: HasCallStack => Int -> [Name] -> Tm -> ShowS
+  go p ns = \case
+    Var (Ix x)   | x >= 0     -> ((ns !! x)++)
+                 | otherwise -> (("<"++ show x ++ ">")++)
+    App t u Expl              -> par p appp $ go appp ns t . (' ':) . go atomp ns u
+    App t u Impl              -> par p appp $ go appp ns t . (' ':) . bracket (go letp ns u)
+
+    Lam (fresh ns -> x) i t   -> par p letp $ ("λ "++) . lamBind x i . goLam (ns:>x) t where
+                                   goLam ns (Lam (fresh ns -> x) i t) =
+                                     (' ':) . lamBind x i . goLam (ns:>x) t
+                                   goLam ns t =
+                                     (". "++) . go letp ns t
+    LamCase cls               -> ("lambdacase" ++) -- TODO
+
+    U                         -> ("U"++)
+    Absurd t                  -> par p appp $ ("absurd "++) . go atomp ns t
+    Pi "_" Expl a b           -> par p pip $ go appp ns a . (" → "++) . go pip (ns:>"_") b
+
+    Pi (fresh ns -> x) i a b  -> par p pip $ piBind ns x i a . goPi (ns:>x) b where
+                                   goPi ns (Pi (fresh ns -> x) i a b)
+                                     | x /= "_" = piBind ns x i a . goPi (ns:>x) b
+                                   goPi ns b = (" → "++) . go pip ns b
+
+    Let (fresh ns -> x) a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp ns a
+                                 . ("\n  = "++) . go letp ns t . (";\n\n"++) . go letp (ns:>x) u
+
+    Meta m                    -> (("?"++show m)++)
+    InsertedMeta m bds        -> goBDS p ns m bds
+    Call f                    -> (f ++)
+    -- Prop                      -> ("Prop"++)
+    PropTm                    -> ("..." ++)
+    Prim p                    -> (show p ++)
+    Proj t x                  -> par p appp $ go appp ns t . ((" ."++x)++) 
+
+showTm0 :: Tm -> String
+showTm0 t = prettyTm 0 [] t []
+
+displayMetas :: Defs -> IO ()
+displayMetas defs = do
+  ms <- readIORef mcxt
+  forM_ (IM.toList ms) $ \(m, e) -> case e of
+    Unsolved -> printf "let ?%s = ?;\n" (show m)
+    Solved v -> printf "let ?%s = %s;\n" (show m) (showTm0 $ quote defs [] 0 v)
+  putStrLn ""
+
+showDefs :: Defs -> String 
+showDefs defs = unlines $ map showDef (M.toList defs) where
+  showDef (fname, def) = case def of
+    DefFunc f -> "def " ++ funcName f
+    DefData d -> "data " ++ dataName d
+    DefCons c -> "constructor " ++ consName c
