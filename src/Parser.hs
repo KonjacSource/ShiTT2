@@ -47,7 +47,7 @@ kwList = [ "let",       "λ",      "U"
          , "begin",     "end",    "absurd"
          , "fun",       "match",  "with"
          , "quotient",  "cast",   "apd"
-         , "Prop"
+         , "Prop",      "for"
          ]
 
 keyword :: String -> Bool
@@ -141,21 +141,6 @@ pAbsurd = do
   t <- pTm
   pure $ Absurd t
 
-pLamCase :: Parser Tm 
-pLamCase = do
-  pKeyword "fun"
-  cls <- some pClause
-  pure $ LamCase cls
-
-pMatch :: Parser Tm
-pMatch = do
-  pKeyword "match"
-  t <- pTm
-  pKeyword "with"
-  cls <- some pClause
-  pKeyword "end"
-  pure $ Match t cls
-
 pOeq :: Parser Tm 
 pOeq = do 
   lhs <- pAtom
@@ -164,7 +149,7 @@ pOeq = do
   pure $ Oeq (maybe Hole id ty) lhs rhs
 
 pTm :: Parser Tm
-pTm = withPos (try pOeq <|> pLam <|> pLet <|> try pPi <|> pFunOrSpine <|> pAbsurd <|> pLamCase <|> pMatch)
+pTm = withPos (try pOeq <|> pLam <|> pLet <|> try pPi <|> pFunOrSpine <|> pAbsurd)
 
 pSrc :: Parser Tm
 pSrc = ws *> pTm <* eof
@@ -209,7 +194,31 @@ pattern' ::
   | {id = pattern}
 
 patterns ::= pattern'*
+
+apd_def ::=
+  `def` apd `for` f
+  many apd_clause
+apd_clause ::= 
+  `|` pattern patterns ::= tm 
 -}
+
+pApd :: Parser RApdDef
+pApd = do
+  pKeyword "def"
+  pKeyword "apd"
+  pKeyword "for"
+  f <- pIdent
+  cls <- many pApdClause
+  pure $ RApdDef f cls
+
+pApdClause :: Parser RApdClause
+pApdClause = do
+  bar
+  fps <- pPattern'
+  pxye <- pPatterns
+  char '='
+  rhs <- pTm
+  pure $ RApdClause (snd fps) pxye rhs
 
 pFunc :: Parser RFuncDef
 pFunc = do
@@ -249,6 +258,7 @@ pClause =
         ps <- bar >> pPatterns 
         rhs <- char '=' >> pTm 
         pure (RClause ps rhs)
+
 
 {-
 
@@ -354,7 +364,11 @@ pMutualBody = do
 pDef :: Parser (SourcePos, RDef)
 pDef = do 
   spos <- getSourcePos
-  def <- choice [pFunc >>= pure . RDefFunc, pData >>= pure . RDefData, pMutualBlock >>= pure . RDefMutual]
+  def <- choice [try pApd >>= pure . RDefApd
+                , pFunc >>= pure . RDefFunc
+                , pData >>= pure . RDefData
+                , pMutualBlock >>= pure . RDefMutual
+                ]
   pure (spos, def)
 
 pProgram :: Parser Program 

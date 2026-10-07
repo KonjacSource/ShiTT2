@@ -39,13 +39,8 @@ opnCls = unsafeDupablePerformIO $ newIORef M.empty
 {-# noinline opnCls #-}
 
 insertCls :: Name -> ApdCls -> IO ()
-insertCls fname cls = do
-  clss <- readIORef opnCls
-  if M.member fname clss then
-    modifyIORef opnCls (M.mapWithKey (\k -> if k == fname then (cls :) else id)) 
-  else 
-    modifyIORef opnCls (M.insert fname [cls])
-    
+insertCls fname = modifyIORef opnCls . insertItem fname 
+
 reset :: IO ()
 reset = do
   writeIORef nextMeta 0

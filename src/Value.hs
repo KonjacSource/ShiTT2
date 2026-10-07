@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 
 module Value where
 
@@ -18,12 +19,11 @@ data Val
   | VPi Name Icit ~VTy {-# unpack #-} Closure
   | VU
   | VAbsurd Val
-  | VLamCase Env [Clause] Spine
-  | VLamCaseHold Env [Clause] Spine
   | VFunc FuncDef Spine
   | VHold FuncDef Spine -- Clauses are exhausted, but the function is still stucked (a neutral term forever)
   | VData DataDef Spine 
   | VCons ConsDef Spine
+  | VPathCons EqConsDef Spine
 
   -- | VProp 
   | VPropTm 
@@ -37,3 +37,24 @@ pattern VVar x = VRigid x []
 pattern VMeta :: MetaVar -> Val
 pattern VMeta m = VFlex m []
 
+-- eqName : eqTel -> eqLhs =_{eqData eqIx} eqRhs
+data EqCons = EqCons 
+  { eqData :: DataDef 
+  , eqName :: Name
+  , eqTel  :: Telescope
+  , eqLhs  :: Tm 
+  , eqRhs  :: Tm 
+  , eqIx   :: TSpine
+  } deriving Show
+
+eqCons2Defs :: EqCons -> EqConsDef
+eqCons2Defs EqCons{..} = EqConsDef 
+  { eqNameDef = eqName
+  , eqDataDef = eqData
+  , eqTypeDef = goPi eqTel $ mkEq eqLhs eqRhs eqIx
+  } where 
+    goPi :: Telescope -> Tm -> Tm
+    goPi [] t = t
+    goPi ((x, i, a):rest) t = Pi x i a (goPi rest t)
+    mkEq :: Tm -> Tm -> TSpine -> Tm 
+    mkEq lhs rhs sp = applySp (Prim Oeq) [(applySp (Call (dataName eqData)) sp, Impl), (lhs, Expl), (rhs, Expl)]

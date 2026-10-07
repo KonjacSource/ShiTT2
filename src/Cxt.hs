@@ -25,8 +25,8 @@ showVal cxt v =
   prettyTm 0 (cxtNames cxt) (quoteCxt cxt v) []
 
 showSp :: HasCallStack => Cxt -> Spine -> String
-showSp cxt sp = join $ map (\(v, i) -> paren i (showVal cxt v)) sp where
-  paren Impl s = "" -- "{" ++ s ++ "} "
+showSp cxt sp = join $ map (\(v, i) -> paren i (showVal cxt v)) (reverse sp) where
+  paren Impl s = "{" ++ s ++ "} "
   paren Expl s = "(" ++ s ++ ") "
 
 showTm :: HasCallStack => Cxt -> Tm -> String
@@ -66,7 +66,7 @@ instance Show Cxt where
   show = show . cxtNames
 
 emptyQITInfo :: QITInfo
-emptyQITInfo = QITInfo M.empty M.empty
+emptyQITInfo = QITInfo M.empty M.empty M.empty M.empty
 
 emptyCxt :: SourcePos -> Cxt
 emptyCxt s = Cxt [] 0 [] [] s M.empty emptyQITInfo
@@ -88,4 +88,4 @@ define (Cxt env l types bds pos defs qinfo) x ~t ~a  =
 
 -- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
 closeVal :: Cxt -> Val -> Closure
-closeVal cxt t = Closure (env cxt) (quote (defs cxt) (VVar (lvl cxt) : env cxt) (lvl cxt + 1) t)
+closeVal cxt t = Closure (env cxt) (quote (defs cxt) (lvl cxt + 1) t)

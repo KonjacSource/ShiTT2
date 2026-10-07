@@ -50,7 +50,6 @@ data Tm
   | App Tm Tm Icit
   | U
   | Absurd Tm
-  | LamCase [Clause]
   | Pi Name Icit Ty Ty
   | Let Name Ty Tm Tm
   | Meta MetaVar
@@ -94,7 +93,6 @@ noMetas = \case
   App t u _ -> noMetas t && noMetas u
   U -> True
   Absurd _ -> True
-  LamCase cls -> all (\(Clause ps rhs) -> noMetas rhs) cls
   Pi _ _ a b -> noMetas a && noMetas b
   Let _ a t u -> noMetas a && noMetas t && noMetas u
   Meta _ -> False
@@ -106,6 +104,9 @@ noMetas = \case
   Proj t _ -> noMetas t
 
 
+-- NOTE. The order of TSpine is completely messed up, somewhere it is reversed, somewhere it is not. 
+-- And somewhere the reversing is cancelled out, so it works well. 
+-- It is confusing. I'll fix it later.
 type TSpine = [(Tm, Icit)]
 
 applySp :: Tm -> TSpine -> Tm

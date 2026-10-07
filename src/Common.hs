@@ -9,6 +9,7 @@ module Common (
 import Text.Megaparsec
 import Control.Exception
 import GHC.IO (unsafePerformIO)
+import qualified Data.Map as M
 
 type Name = String
 type Id = String
@@ -46,3 +47,9 @@ might action = unsafePerformIO $ (action >>= pure . Just) `catch` \() -> pure No
 
 quitMight :: IO a 
 quitMight = throwIO ()
+
+insertItem :: Ord k => k -> v -> M.Map k [v] -> M.Map k [v]
+insertItem k v m = if M.member k m then
+  M.adjust (v :) k m
+else 
+  M.insert k [v] m

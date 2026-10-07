@@ -38,21 +38,22 @@ data ApdCls = ApdCls
   -- These values have nothing to do with apdCxt
   }
 
--- eqName : eqTel -> eqLhs =_{eqData eqIx} eqRhs
-data EqCons = EqCons 
-  { eqData :: DataDef 
-  , eqName :: Name
-  , eqTel  :: Telescope
-  , eqLhs  :: Tm 
-  , eqRhs  :: Tm 
-  , eqIx   :: TSpine
-  }
-
 type Defs = M.Map Name Def
 data QITInfo = QITInfo
-  { apdCls :: M.Map Name (FuncDef, [Pattern], Pattern)
-                            -- apd is defined for `apd (f xs) e`
-  , extraEq:: M.Map Name EqCons
-                            -- path constructors given by QITs, indexed by the name of the path constructor
-  -- TODO: extraEq' :: M.Map Name [EqCons] -- indexed by the name of the QIT, this is necessary
+  { apdCls :: M.Map Name (FuncDef, [Pattern], Pattern) -- apd is defined for `apd (f xs) e`
+  , extraEq :: M.Map Name EqCons -- path constructors given by QITs, indexed by the name of the path constructor
+  , extraEq' :: M.Map Name [EqCons] -- indexed by the name of the QIT
+  , definedApd :: M.Map Name [PatternTele Empty] -- for which (f ps, {x, y}, e) apd is defined, indexed by the name of `f`
   }
+
+insertEqCon :: EqCons -> QITInfo -> QITInfo
+insertEqCon eqcons qiti = 
+  qiti { extraEq = M.insert (eqName eqcons) eqcons (extraEq qiti)
+       , extraEq' = insertItem (dataName (eqData eqcons)) eqcons (extraEq' qiti) }
+
+insertApd :: Name -> PatternTele Empty -> QITInfo -> QITInfo
+insertApd f ps qiti = 
+  qiti { definedApd = insertItem f ps (definedApd qiti) }
+
+isQITCon :: Name -> QITInfo -> Bool
+isQITCon c qiti = M.member c (extraEq qiti)

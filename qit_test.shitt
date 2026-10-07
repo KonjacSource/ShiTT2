@@ -13,14 +13,5 @@ def f : Bool -> I -> Nat
 | false i0 = zero
 | false i1 = zero
 
-def g : Bool -> I -> Nat
-| true i0 = zero 
-| true i1 = zero
-| false h = zero
-
-def apd 
-| (f false) seg = refl
-| (f true) seg = refl
-
-def apd 
-| (g true) seg = refl
+def apd for f 
+| (f true) seg = sorry

@@ -9,7 +9,8 @@ type Telescope = [(Name, Icit, Ty)]
 data Def
   = DefFunc FuncDef
   | DefData DataDef
-  | DefCons ConsDef 
+  | DefCons ConsDef
+  | DefEq   EqConsDef
   deriving Show 
 
 data ConsDef = ConsDef
@@ -17,6 +18,12 @@ data ConsDef = ConsDef
   , consData :: DataDef -- ^ Datatype which the constructor belongs to.
   , consType :: Ty -- ^ The type of the constructor.
   } 
+
+data EqConsDef = EqConsDef
+  { eqNameDef :: Name
+  , eqDataDef :: DataDef -- ^ Datatype which the constructor belongs to.
+  , eqTypeDef :: Ty -- ^ The type of the constructor.
+  }
 
 data FuncDef = FuncDef
   { funcName :: Name
@@ -31,11 +38,13 @@ data DataDef = DataDef
   -- ^ List of (Name of constructor, Arguments list, The returning indexes), 
   -- Note that the returning indexes is under the context of the arguments list. 
   , isQIT    :: Bool
-  } 
+  }
 
 instance Show ConsDef where 
   show = consName
 
+instance Show EqConsDef where 
+  show = eqNameDef
 
 instance Show FuncDef where 
   show = funcName
@@ -54,8 +63,14 @@ lookupCons (DataDef d _ cons _) c = go cons where
 getConsType :: DataDef -> Telescope -> TSpine -> Tm 
 getConsType d [] ix = go (Call $ dataName d) ix where 
   go t [] = t
-  go t (as :> (a, i)) = App (go t as) a i
+  go t (as :> (a, i)) = App (go t as) a i 
 getConsType d ((x, i, t):ts) ix = Pi x i t $ getConsType d ts ix 
+
+getPathConType :: DataDef -> Telescope -> TSpine -> Tm -> Tm -> Tm 
+getPathConType d [] ix lhs rhs = applySp (Prim Oeq) [(go (Call $ dataName d) ix, Impl), (lhs, Expl), (rhs, Expl)] where 
+  go t [] = t
+  go t (as :> (a, i)) = App (go t as) a i 
+getPathConType d ((x, i, t):ts) ix lhs rhs = Pi x i t $ getPathConType d ts ix lhs rhs
 
 dataType :: DataDef -> Ty 
 dataType d = go (dataIx d) where 
@@ -90,6 +105,20 @@ data RDataDef = RDataDef
   , isQITR :: Bool 
   } deriving Show 
 
+-- def apd 
+-- | (f ps) e = rhs
+data RApdDef = RApdDef
+  { apdFuncNameR :: Name   -- ^ f
+  , apdClausesR :: [RApdClause] -- ^ | (f ps) e = rhs
+  }
+
+-- | (f ps) {x} {y} e = rhs
+data RApdClause = RApdClause
+  { apdPatR1 :: R.RPattern  -- ^ f ps
+  , apdPatR2 :: R.RPatterns -- ^ {x} {y} e
+  , apdRhsR  :: R.Tm        -- ^ rhs
+  }
+
 data Header = FunHeader Name R.Tm | DataHeader Name Bool R.Tm -- true for qit
   deriving Show 
 
@@ -100,7 +129,11 @@ data RMutalBlock = RMutalBlock
   , mutualBody :: [(SourcePos, Body)]
   }
 
-data RDef = RDefData RDataDef | RDefFunc RFuncDef | RDefMutual RMutalBlock
+data RDef 
+  = RDefData RDataDef 
+  | RDefFunc RFuncDef 
+  | RDefApd RApdDef
+  | RDefMutual RMutalBlock
 
 type Program = [(SourcePos, RDef)]
 

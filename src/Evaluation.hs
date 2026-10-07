@@ -39,9 +39,6 @@ match1 defs env pat val = case (pat, val) of
     | c == consName c_def   -> fmap (PatCon c) (match defs env ps args)
     | otherwise             -> MatchFailed
   (PatCon _ _, VAbsurd _)   -> MatchStuck BAbsurd
-  (PatCon _ _, VLamCase {}) -> MatchStuck BLamCase
-  (PatCon _ _, VLamCaseHold {})
-                            -> MatchStuck BLamCase
   (PatCon _ _, VRigid x _)  -> MatchStuck (BVar x (PatMark ()))
   (PatCon _ _, VFunc f _)   -> MatchStuck (BFunc f)
   (PatCon _ _, VHold f _)   -> MatchStuck (BFunc f)
@@ -54,6 +51,7 @@ match1 defs env pat val = case (pat, val) of
   (PatCon _ _, VPropTm)     -> MatchFailed
   (PatCon _ _, VPrim _ _)   -> MatchFailed
   (PatCon _ _, VProj {})    -> MatchFailed
+  (PatCon _ _, VPathCons _ _) -> error "TODO: Not supported" -- We hope we'd never need to match with path constructors, since they are irrelevant
   (PatFunc f ps, VFunc f' args)
     | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match defs env ps args)
   (PatFunc f ps, VHold f' args)
@@ -87,11 +85,6 @@ vApp defs t u i = case force defs t of
     | otherwise -> let (sp', rest) = splitAt (arity f) (sp :> (u,i)) in
         vAppSp defs (evalFun defs [] f (funcClauses f) sp') rest
   VHold f sp -> VHold f (sp :> (u,i))
-  VLamCase env cls sp
-    | length sp + 1 < arity cls -> evalLamCase defs env cls (sp :> (u, i))
-    | otherwise -> let (sp', rest) = splitAt (arity cls) (sp :> (u,i)) in
-        vAppSp defs (evalLamCase defs env cls sp') rest
-  VLamCaseHold env cls sp -> VLamCaseHold env cls (sp :> (u,i))
   VCons c sp -> VCons c (sp :> (u,i))
   VData d sp -> VData d (sp :> (u,i))
   VPrim Cast vs -> VPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
@@ -109,34 +102,12 @@ evalFun defs env f (c:cs) sp
         MatchStuck _ -> VHold f sp       -- Stucked
         MatchSuc env' -> eval defs env' (clauseRhs c) -- Succeeded
 
--- TODO: refactor with evalFun
-evalLamCase :: HasCallStack => Defs -> Env -> [Clause] -> Spine -> Val
-evalLamCase defs env [] sp = VLamCaseHold env [] sp -- No matchable clause
-evalLamCase defs env (c:cs) sp
-  | length sp < arity (c:cs) = VLamCase env (c:cs) sp -- Wait
-  | otherwise = -- `length sp == arity f`
-      case match defs env (clausePatterns c) sp of
-        MatchFailed -> evalLamCase defs env cs sp --Failed
-        MatchStuck _ -> VLamCaseHold env (c:cs) sp       -- Stucked
-        MatchSuc env' -> eval defs env' (clauseRhs c) -- Succeeded
-
 -- Return Nothing if stucked or no matching clause
 evalFun' :: HasCallStack => Defs -> Env -> FuncDef -> Spine -> Maybe Val
 evalFun' defs env f sp = go (funcClauses f) where
   go [] = Nothing
   go (c:cs)
     | length sp < arity f = Nothing -- Wait
-    | otherwise = -- `length sp == arity f`
-        case match defs env (clausePatterns c) sp of
-          MatchFailed -> go cs --Failed
-          MatchStuck _ -> Nothing       -- Stucked
-          MatchSuc env' -> Just $ eval defs env' (clauseRhs c) -- Succeeded
-
-evalLamCase' :: HasCallStack => Defs -> Env -> [Clause] -> Spine -> Maybe Val
-evalLamCase' defs env cls sp = go cls where
-  go [] = Nothing
-  go (c:cs)
-    | length sp < arity cls = Nothing -- Wait
     | otherwise = -- `length sp == arity f`
         case match defs env (clausePatterns c) sp of
           MatchFailed -> go cs --Failed
@@ -174,11 +145,11 @@ eval defs env = \case
   Call f              -> case M.lookup f defs of
                           Just (DefFunc f)
                             | arity f == 0 && not (null $ funcClauses f) -> eval defs env (clauseRhs (head (funcClauses f))) -- eval 0-arity function
-                            | otherwise-> VFunc f []
+                            | otherwise -> VFunc f []
                           Just (DefData d) -> VData d []
+                          Just (DefEq  eq) -> VPathCons eq []
                           Just (DefCons c) -> VCons c []
                           Nothing -> error $ "eval: impossible " ++ show f
-  LamCase clauses     -> VLamCase env clauses []
   -- Prop                -> VProp
   PropTm              -> VPropTm
   Prim Cast           -> VPrim Cast []
@@ -202,36 +173,29 @@ lvl2Ix (Lvl l) (Lvl x) = Ix (l - x - 1)
 ix2Lvl :: Lvl -> Ix -> Lvl
 ix2Lvl (Lvl l) (Ix x) = Lvl (l - x - 1)
 
-quoteSp :: Defs -> Env -> Lvl -> Tm -> Spine -> Tm
-quoteSp defs env l t = \case
+quoteSp :: Defs -> Lvl -> Tm -> Spine -> Tm
+quoteSp defs l t = \case
   []           -> t
-  sp :> (u, i) -> App (quoteSp defs env l t sp) (quote defs env l u) i
+  sp :> (u, i) -> App (quoteSp defs l t sp) (quote defs l u) i
 
-quote :: HasCallStack => Defs -> Env -> Lvl -> Val -> Tm
-quote defs env l t = case force defs t of
-  VFlex m sp -> quoteSp defs env l (Meta m) sp
-  VRigid x sp  -> quoteSp defs env l (Var (lvl2Ix l x)) sp
-  VLam x i t   -> Lam x i (quote defs (VVar l : env) (l + 1) ((defs, t) $$ VVar l))
-  VPi x i a b  -> Pi x i (quote defs env l a) (quote defs (VVar l : env) (l + 1) ((defs, b) $$ VVar l))
+quote :: HasCallStack => Defs -> Lvl -> Val -> Tm
+quote defs l t = case force defs t of
+  VFlex m sp -> quoteSp defs l (Meta m) sp
+  VRigid x sp  -> quoteSp defs l (Var (lvl2Ix l x)) sp
+  VLam x i t   -> Lam x i (quote defs (l + 1) ((defs, t) $$ VVar l))
+  VPi x i a b  -> Pi x i (quote defs l a) (quote defs (l + 1) ((defs, b) $$ VVar l))
   VU           -> U
-  VAbsurd v    -> Absurd (quote defs env l v)
+  VAbsurd v    -> Absurd (quote defs l v)
 
-  VLamCase     env cls sp -> LamCase (map (quoteClause defs env l) cls)
-  VLamCaseHold env cls sp -> LamCase (map (quoteClause defs env l) cls)
-
-  VCons c sp   -> quoteSp defs env l (Call (consName c)) sp
-  VFunc f sp   -> quoteSp defs env l (Call (funcName f)) sp
-  VHold f sp   -> quoteSp defs env l (Call (funcName f)) sp
-  VData d sp   -> quoteSp defs env l (Call (dataName d)) sp
+  VCons c sp   -> quoteSp defs l (Call (consName c)) sp
+  VFunc f sp   -> quoteSp defs l (Call (funcName f)) sp
+  VHold f sp   -> quoteSp defs l (Call (funcName f)) sp
+  VData d sp   -> quoteSp defs l (Call (dataName d)) sp
+  VPathCons f sp -> quoteSp defs l (Call (eqNameDef f)) sp
   -- VProp        -> Prop
   VPropTm      -> PropTm
-  VPrim p sp   -> quoteSp defs env l (Prim p) sp
-  VProj v x sp -> quoteSp defs env l (Proj (quote defs env l v) x) sp
-
-quoteClause :: Defs -> Env -> Lvl -> Clause -> Clause
-quoteClause defs env l (Clause ps rhs) = Clause ps rhs' where
-  (cnt, vls) = countVarPat l (Clause ps rhs)
-  rhs' = quote defs (map VVar vls ++ env) (l + Lvl cnt) (eval defs (map VVar vls ++ env) rhs)
+  VPrim p sp   -> quoteSp defs l (Prim p) sp
+  VProj v x sp -> quoteSp defs l (Proj (quote defs l v) x) sp
 
 -- return the levels of bound variables introduced by the clause
 countVarPat :: Lvl -> Clause -> (Int, [Lvl])
@@ -247,10 +211,10 @@ countVarPat (Lvl l) (Clause ps _) = (cnt ps, make (cnt ps)) where
   make n = Lvl (l + n - 1) : make (n - 1)
 
 quoteCxt :: Cxt -> Val -> Tm
-quoteCxt cxt = quote (defs cxt) (env cxt) (lvl cxt)
+quoteCxt cxt = quote (defs cxt) (lvl cxt)
 
 nf :: HasCallStack => Defs -> Env -> Tm -> Tm
-nf defs env t = quote defs env (Lvl (length env)) (eval defs env t)
+nf defs env t = quote defs (Lvl (length env)) (eval defs env t)
 
 fvSp :: Defs -> Lvl -> Spine -> [Lvl]
 fvSp def dep = \case
@@ -264,15 +228,11 @@ fv def dep = nub . \case
   VLam x _ b -> filter (< dep) $ fv def (dep + 1) ((def, b) $$ (VVar dep))
   VPi x _ t b -> fv def dep t ++ filter (< dep) (fv def (dep + 1) ((def, b) $$ (VVar dep)))
   VAbsurd v -> fv def dep v
-  VLamCase _ cls sp -> fvSp def dep sp ++ filter (< dep) (do
-      c@(Clause ps rhs) <- cls
-      let (cnt, vls) = countVarPat dep c
-      fv def (dep + Lvl cnt) (eval def (map VVar vls) rhs))
-  VLamCaseHold env cls sp -> fv def dep (VLamCase env cls sp)
   VCons _ sp -> fvSp def dep sp
   VFunc _ sp -> fvSp def dep sp
   VHold _ sp -> fvSp def dep sp
   VData _ sp -> fvSp def dep sp
+  VPathCons _ sp -> fvSp def dep sp
   VU -> []
   VPrim _ sp -> fvSp def dep sp
   -- VProp -> []
@@ -282,8 +242,8 @@ fv def dep = nub . \case
 
 
 -- dep is the old context depth, we will assign new levels to variables in pattern
-p2v :: Defs -> Lvl -> Pattern -> Val
-p2v defs dep = fst . go1 dep where
+p2v :: (Defs, QITInfo) -> Lvl -> Pattern -> Val
+p2v (defs, qiti) dep = fst . go1 dep where
 
   go1 :: Lvl -> Pattern -> (Val, Lvl)
   go1 l = \case
@@ -292,6 +252,9 @@ p2v defs dep = fst . go1 dep where
       Just (DefCons c) ->
         let (l', r) = go l ps in
           (VCons c l', r)
+      Just (DefEq eq) -> 
+        let (l', r) = go l ps in
+          (VPathCons eq l', r)
       _ -> error "p2v: impossible"
     PatFunc f ps -> case M.lookup f defs of
       Just (DefFunc f) ->
@@ -307,7 +270,7 @@ p2v defs dep = fst . go1 dep where
     in (ps' ++ [(p', i)], l'')
 
 updateVal :: Cxt -> Val -> Val
-updateVal ctx = evalCxt ctx . quote (defs ctx) (env ctx) (lvl ctx)
+updateVal ctx = evalCxt ctx . quote (defs ctx) (lvl ctx)
 
 updateSp :: Cxt -> Spine -> Spine
 updateSp ctx = \case
@@ -315,4 +278,4 @@ updateSp ctx = \case
   sp :> (v, i) -> updateSp ctx sp :> (updateVal ctx v, i)
 
 varr :: Cxt -> VTy -> VTy -> VTy
-varr ctx a b = VPi "_" Expl a (Closure (env ctx) $ quote (defs ctx) (VVar (lvl ctx) : env ctx) (lvl ctx + 1) b)
+varr ctx a b = VPi "_" Expl a (Closure (env ctx) $ quote (defs ctx) (lvl ctx + 1) b)

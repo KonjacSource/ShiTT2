@@ -95,14 +95,6 @@ check cxt t a = case (t, force (defs cxt) a) of
   (R.Lam x i t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') i -> do
     Lam x i' <$> check (bind cxt x a) t ((defs cxt, b) $$ VVar (lvl cxt))
 
-  (R.LamCase cls, ty) -> do
-    cls' <- mapM (checkLamCls cxt ty) cls
-    -- TODO : Check coverage for lambda case, deal with QIT elim
-    -- case checkCover cxt ty (arity cls') (map clausePatterns cls') of
-    --   Left err ->  throwIO $ Error cxt LambdaCaseUnCover
-    --   Right () -> pure $ LamCase cls'
-    pure $ LamCase cls'
-
   -- Otherwise if Pi is implicit, insert a new implicit lambda
   (t, VPi x Impl a b) -> do
     Lam x Impl <$> check (newBinder cxt x a) t ((defs cxt, b) $$ VVar (lvl cxt))
@@ -131,12 +123,6 @@ check cxt t a = case (t, force (defs cxt) a) of
         throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt t_ty)
       Nothing -> throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt t_ty)
 
-  (R.Match t cls, ty) -> do
-    (t', tt) <- infer cxt t
-    let lc = R.LamCase cls
-    lc' <- check cxt lc (varr cxt tt ty)
-    pure $ App lc' t' Expl
-
   (R.Hole, a) ->
     freshMeta cxt
 
@@ -164,6 +150,7 @@ infer cxt = \case
           Just (DefFunc c) -> pure (Call x, eval (defs cxt) (env cxt) (funcType c))
           Just (DefCons c) -> pure (Call x, eval (defs cxt) (env cxt) (consType c))
           Just (DefData c) -> pure (Call x, eval (defs cxt) (env cxt) (dataType c))
+          Just (DefEq c)   -> pure (Call x, eval (defs cxt) (env cxt) (eqTypeDef c))
           Nothing -> throwIO $ Error cxt $ NameNotInScope x
     go 0 (types cxt)
 
@@ -175,12 +162,6 @@ infer cxt = \case
 
   R.Lam x Left{} t ->
     throwIO $ Error cxt InferNamedLam
-
-  R.LamCase _ ->
-    throwIO $ Error cxt InferLamCase
-
-  R.Match t cls ->
-    throwIO $ Error cxt InferLamCase
 
   R.App t u i -> do
 
@@ -352,7 +333,8 @@ data UnifRes
 -- t is their type, and ctx' is the context after unification.
 -- We need to update the portion of the context that comes after the unified variable.
 unify :: Cxt -> Val -> Val -> VTy -> IO UnifRes
-unify ctx u v t =
+unify ctx u v t = do
+  putStrLn $ "Unifying: " ++ showVal ctx u ++ " and " ++ showVal ctx v ++ " at type " ++ showVal ctx t
   case (force' ctx u, force' ctx v, force' ctx t) of
     (VVar x, v, _)
       | x `notElem` fv (defs ctx) (lvl ctx) v ->
@@ -364,6 +346,12 @@ unify ctx u v t =
       | consName c == consName c' && not (isQIT d) ->
           unifySp ctx us vs $ evalCxt ctx (consType c)
       | not (isQIT d) -> pure UnifFail
+    (VData d us, VData d' vs, _) 
+      -- We assume the injectivity of datatype formers over indexes. I think it is safe without UA
+      -- Which makes the dpm analysis for QIT constructors easier.
+      | dataName d == dataName d ->
+          unifySp ctx us vs $ evalCxt ctx (dataType d)
+      | otherwise -> pure UnifFail
     (u, v, _) ->
       (U.unify (defs ctx) (env ctx) (lvl ctx) u v >> pure (UnifOk ctx))
       `catch` \ UnifyError ->
@@ -379,17 +367,10 @@ unifySp ctx us vs ts = case (reverse us, reverse vs, ts) of
         let u' = updateVal ctx' u in
         unifySp ctx' us vs ((defs ctx, b) $$ u')
       e -> pure e
-  -- ((force' ctx -> u, i1):us, (force' ctx -> v, i2):vs, VPi x i3 t b) -> do 
-  --   -- print all the arguments
-  --   putStrLn $ showVal ctx u ++ " " ++ show i1
-  --   putStrLn $ showVal ctx v ++ " " ++ show i2
-  --   putStrLn $ showVal ctx t ++ " " ++ show i3
-  --   putStrLn x
-  --   error "!!!!"
   _ -> throwIO $ DefError ctx $ PatArgMismatch
 
 freshVal :: Defs -> [Val] -> [Val] -> Val -> Val
-freshVal def from to = eval def to . quote def from (Lvl (length from))
+freshVal def from to = eval def to . quote def (Lvl (length from))
 
 -- Note. This is a very bad function, it refresh the hole context.
 -- But I can't figure out a better way now.
@@ -441,16 +422,6 @@ checkCls ctx func_name func_typ (R.RClause rps rhs) = do
   else do
     throwIO $ DefError ctx $ UnsolvedMetaInFuncDef func_name
 
-checkLamCls :: HasCallStack => Cxt -> VTy -> R.RClause -> IO Clause
-checkLamCls ctx fty (R.RClause rps rhs) = do
-  (ps, ctx', rhs_ty) <- checkPat False ctx rps fty
-  rhs' <- check ctx' rhs rhs_ty
-  let rhs'' = nf (defs ctx') (env ctx') rhs'
-  if noMetas rhs'' then
-    pure $ Clause ps rhs''
-  else do
-    throwIO $ Error ctx $ UnsolvedMetaInLambdaCase
-
 -- Pattern match against given type, returning the rest type (rhs type) and rhs Cxt.
 -- isCons = True, if we are elaborating the patterns of a constructor.
 -- Throws `Error`, throw `DefError _ $ WrongPattern _ _` for absurd patterns, `DefError _ $ UnsurePattern _ _` for IDK patterns.
@@ -459,6 +430,13 @@ checkPat :: Bool -> Cxt -> R.RPatterns -> VTy -> IO ([(Pattern, Icit)], Cxt, VTy
 checkPat isCons ctx [] ty
   | isCons = case force' ctx ty of 
     -- If we are elaborating constructor patterns, we need to make sure all implicit patterns are filled.
+    -- i.e.
+    -- data Id : U -> U -> U where 
+    --    | refl : {x : U} -> Id x x
+    -- symm : Id x y -> Id y x 
+    -- symm refl = refl 
+    -- would be elaborated as
+    -- symm (refl {u}) = refl 
       VPi x Impl a b -> do
         let ctx' = bind ctx ('_':x) a
         let b' = (defs ctx', b) $$ VVar (lvl ctx)
@@ -496,14 +474,53 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (for
           -- So we have to refresh the Cxt.
           -- Note. Here p2v start from the level of ctx, not ctx''.
           let p = PatCon c ps'
-          let patVal = p2v (defs ctx'') (lvl ctx) p
+          let patVal = p2v (defs ctx'', qitInfo ctx'') (lvl ctx) p
           let patVal' = evalCxt ctx'' (quoteCxt ctx'' patVal)
           let b_rest = (defs ctx'', b) $$ patVal'
           let b_rest_updated = evalCxt ctx'' (quoteCxt ctx'' b_rest)
           (rps, rctx, rty) <- checkPat isCons ctx'' ps b_rest_updated
           pure ((p, i) : rps, rctx, rty)
         _ -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx a)
-    _ | null c_arg    -> do -- Var pattern.
+    (Just (DefEq _)) | isQITCon c (qitInfo ctx) -> case M.lookup c (extraEq (qitInfo ctx)) of 
+        Nothing -> error "checkPat: impossible"
+        Just conEq -> case force' ctx a of 
+          VPrim Oeq eq_arg@(reverse -> [(VData d d_arg, Impl), (lhs, Expl), (rhs, Expl)]) | isQIT d -> do 
+            -- TODO: refactor, merge with the above code.
+            let c_tele = eqTel conEq
+            let c_ix = eqIx conEq
+            let c_ty = evalCxt ctx $ getPathConType d c_tele c_ix (eqLhs conEq) (eqRhs conEq)
+            putStrLn $ "lhs: " ++ showVal ctx lhs ++ " rhs: " ++ showVal ctx rhs
+            putStrLn $ 
+              "Checking constructor " ++ c ++ "with tele: " ++ show c_tele ++ " and ix: " ++ show c_ix ++ "\n get c_ty: " ++ showVal ctx c_ty
+            (ps', ctx', c_ty') <- checkPat True ctx c_arg c_ty
+            eq_args' <- case c_ty' of
+              VPrim Oeq sp@(reverse -> [(VData d' dsp, Impl), (lhs', Expl), (rhs', Expl)]) 
+                | dataName d' == dataName d -> pure sp
+              e -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx' e)
+            let oeqTy = Pi "A" Impl U $ 
+                        Pi "x" Expl (Var 0) $ 
+                        Pi "y" Expl (Var 1) $ 
+                        U
+            -- Work mark
+            let oeq_type = evalCxt ctx' oeqTy
+            -- remember to unify lhs and rhs
+            putStrLn $ "Unifying: " ++ showSp ctx' eq_arg ++ " and " ++ showSp ctx' eq_args' ++ " at type " ++ showVal ctx' oeq_type
+            uni_res <- unifySp ctx' eq_arg eq_args' oeq_type
+            ctx'' <- case uni_res of
+              UnifOk c  -> pure c
+              UnifStuck -> throwIO $ DefError ctx $ UnsurePattern c (quoteCxt ctx a)
+              UnifFail  -> throwIO $ DefError ctx $ WrongPattern  c (quoteCxt ctx a)
+
+            let p = PatCon c ps'
+            let patVal = p2v (defs ctx'', qitInfo ctx'') (lvl ctx) p
+            let patVal' = evalCxt ctx'' (quoteCxt ctx'' patVal)
+            let b_rest = (defs ctx'', b) $$ patVal'
+            let b_rest_updated = evalCxt ctx'' (quoteCxt ctx'' b_rest)
+            (rps, rctx, rty) <- checkPat isCons ctx'' ps b_rest_updated
+            pure ((p, i) : rps, rctx, rty)            
+
+          _ -> throwIO $ DefError ctx $ PMNoneEq (quoteCxt ctx a)  
+    _ | null c_arg -> do -- Var pattern.
           let x = c
           let ctx' = bind ctx x a
           let b' = (defs ctx, b) $$ VVar (lvl ctx)
@@ -619,7 +636,7 @@ splitCxt cxt x = case force' cxt (findType cxt x) of
           case cp of
             Nothing -> pure []
             Just ([(p', _)], cxt', _) -> do
-              let pv = p2v (defs cxt) (lvl cxt) p'
+              let pv = p2v (defs cxt, qitInfo cxt) (lvl cxt) p'
               let cxt'' = updateCxt cxt' x pv
               pure [cxt'']
             _ -> error "splitCxt: impossible"

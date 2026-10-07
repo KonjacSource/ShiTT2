@@ -6,8 +6,6 @@ import Common
 data Tm
   = Var Name                       -- x
   | Lam Name (Either Name Icit) Tm -- \x. t | \{x}. t | \{x = y}. t
-  | LamCase [RClause]              -- fun `|` p = t `|` ...
-  | Match Tm [RClause]             -- match t with `|` p = t `|` ... end
   | App Tm Tm (Either Name Icit)   -- t u  | t {u} | t {x = u}
   | U                              -- U
   | Absurd Tm                      -- absurd x
@@ -28,8 +26,6 @@ stripPos :: Tm -> Tm
 stripPos = \case
   Var x        -> Var x
   Lam x i t -> Lam x i (stripPos t)
-  LamCase cls  -> LamCase [RClause (clausePatternsR c) (stripPos (clauseRhsR c)) | c <- cls]
-  Match t cls  -> Match (stripPos t) [RClause (clausePatternsR c) (stripPos (clauseRhsR c)) | c <- cls]
   App t u i    -> App (stripPos t) (stripPos u) i
   U            -> U
   Absurd x     -> Absurd (stripPos x)

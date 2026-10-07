@@ -65,7 +65,6 @@ prettyTm prec = go prec where
                                      (' ':) . lamBind x i . goLam (ns:>x) t
                                    goLam ns t =
                                      (". "++) . go letp ns t
-    LamCase cls               -> ("lambdacase" ++) -- TODO
 
     U                         -> ("U"++)
     Absurd t                  -> par p appp $ ("absurd "++) . go atomp ns t
@@ -95,7 +94,7 @@ displayMetas defs = do
   ms <- readIORef mcxt
   forM_ (IM.toList ms) $ \(m, e) -> case e of
     Unsolved -> printf "let ?%s = ?;\n" (show m)
-    Solved v -> printf "let ?%s = %s;\n" (show m) (showTm0 $ quote defs [] 0 v)
+    Solved v -> printf "let ?%s = %s;\n" (show m) (showTm0 $ quote defs 0 v)
   putStrLn ""
 
 showDefs :: Defs -> String 
@@ -104,3 +103,4 @@ showDefs defs = unlines $ map showDef (M.toList defs) where
     DefFunc f -> "def " ++ funcName f
     DefData d -> "data " ++ dataName d
     DefCons c -> "constructor " ++ consName c
+    DefEq eq -> "eq " ++ eqNameDef eq

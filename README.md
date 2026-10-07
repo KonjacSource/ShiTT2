@@ -19,3 +19,10 @@ quotient data I : Type where
 
 Then `i0 ~{I} i1` is a canonical form with a single constructor `seg`.
 
+---
+
+This is just an experimental project currently, and I will make it better someday.
+Known missing parts:
+- guardness checking for apd clause
+- proof-irrelevance
+- observational computational rules of OTT

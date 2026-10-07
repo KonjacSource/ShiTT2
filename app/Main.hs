@@ -101,11 +101,11 @@ mainWith getOpt getRaw = do
       (defs, qiti) <- readIORef defsR
       putStrLn $ showTm0 $ nf defs [] t
       putStrLn "  :"
-      putStrLn $ showTm0 $ quote defs [] 0 a
+      putStrLn $ showTm0 $ quote defs 0 a
     ["type"] -> do
       (t, a) <- elab
       (defs, qiti) <- readIORef defsR
-      putStrLn $ showTm0 $ quote defs [] 0 a
+      putStrLn $ showTm0 $ quote defs 0 a
     ["elab"] -> do
       (t, a) <- elab
       (defs, qiti) <- readIORef defsR
@@ -182,14 +182,14 @@ repl' (ori_defs, qiti) = do
       ":t":(unwords -> expr) -> do
         (t, a) <- elab defsR expr
         (defs, qiti) <- readIORef defsR
-        putStrLn $ showTm0 $ quote defs [] 0 a
+        putStrLn $ showTm0 $ quote defs 0 a
         loop defsR
       ":nf":(unwords -> expr)   -> do
         (t, a) <- elab defsR expr
         (defs, qiti) <- readIORef defsR
         putStrLn $ showTm0 $ nf defs [] t
         putStrLn "  :"
-        putStrLn $ showTm0 $ quote defs [] 0 a
+        putStrLn $ showTm0 $ quote defs 0 a
         loop defsR
       [":q"] -> putStrLn "Bye!"
       [":l", fp] -> do
@@ -218,7 +218,7 @@ repl' (ori_defs, qiti) = do
         let m = lookupMeta $ MetaVar mn
         case m of 
           Unsolved -> putStrLn $ "Meta ?" ++ show mn ++ " is unsolved."
-          Solved v -> putStrLn $ "Meta ?" ++ show mn ++ " = " ++ showTm0 (quote defs [] 0 v)
+          Solved v -> putStrLn $ "Meta ?" ++ show mn ++ " = " ++ showTm0 (quote defs 0 v)
 
         loop defsR
       [":func", fname] -> do 

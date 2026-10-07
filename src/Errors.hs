@@ -36,6 +36,7 @@ data DefElabError
   = PatArgMismatch
   | NameIsNotCons Name (Maybe DataDef)
   | PMNoneData Tm
+  | PMNoneEq Tm 
   | UnsurePattern Name Tm
   | WrongPattern Name Tm
   | ConstructorMustReturnData Name 
@@ -45,6 +46,9 @@ data DefElabError
   | ClauseArityNonsame
   | UnsolvedMetaInFuncDef Name
   | NameNotFoundOrMismatch Name 
+  | DefiningApdForWrongFunction Name Name 
+  | DefiningApdNotFullyApplied Name
+  | DefiningApdForNonQITElim Name String
   deriving (Show, Exception)
  
 data Error 
@@ -124,6 +128,15 @@ displayError file (DefError cxt e) = do
           printf "Unsolved meta in function definition %s" func_name
         NameNotFoundOrMismatch name ->
           printf "Name not found or mismatch: %s" name
+        DefiningApdForWrongFunction f f' ->
+          printf "Defined an apd clause for %s, while I am expecting for %s" f' f
+        DefiningApdNotFullyApplied name ->
+          printf "Defined an apd clause for %s, but the pattern is not fully applied" name
+        DefiningApdForNonQITElim name ps ->
+          printf "Defined an apd clause for %s with patterns %s, but it is not a QIT eliminator" name ps
+        PMNoneEq t ->
+          "A path constructor matched on non-equality type: " ++ showTm cxt t
+
   printf "%s:%d:%d:\n" path linum colnum
   printf "%s |\n"    lpad
   printf "%s | %s\n" lnum (lines file !! (linum - 1))

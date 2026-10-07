@@ -81,17 +81,11 @@ rename defs m pren v = go pren v where
     VU          -> pure U
     VAbsurd t   -> Absurd <$> go pren t
 
-    VLamCase     env cls sp -> do 
-      cls' <- mapM (goCls pren env) cls
-      pure $ LamCase cls'
-    VLamCaseHold env cls sp -> do 
-      cls' <- mapM (goCls pren env) cls
-      pure $ LamCase cls'
-
     VFunc f sp  -> goSp pren (Call (funcName f)) sp
     VHold f sp  -> goSp pren (Call (funcName f)) sp
     VData f sp  -> goSp pren (Call (dataName f)) sp
     VCons f sp  -> goSp pren (Call (consName f)) sp
+    VPathCons f sp -> goSp pren (Call (eqNameDef f)) sp
     -- VProp       -> pure Prop
     VPropTm     -> pure PropTm
     VPrim p sp  -> goSp pren (Prim p) sp
