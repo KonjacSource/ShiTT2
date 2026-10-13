@@ -47,7 +47,7 @@ kwList = [ "let",       "λ",      "U"
          , "begin",     "end",    "absurd"
          , "fun",       "match",  "with"
          , "quotient",  "cast",   "apd"
-         , "Prop",      "for"
+         , "Prop",      "for",    "rfl"
          ]
 
 keyword :: String -> Bool
@@ -78,6 +78,7 @@ pAtom  =
   -- <|> (pKeyword "Prop" >> pure Prop)
   <|> (pKeyword "cast" >> pure Cast)
   <|> (pKeyword "apd" >> pure Apd)
+  <|> (pKeyword "rfl" >> pure Rfl)
 
 pArg :: Parser (Either Name Icit, Tm)
 pArg =  (try $ braces $ do {x <- pIdent; char '='; t <- pTm; pure (Left x, t)})

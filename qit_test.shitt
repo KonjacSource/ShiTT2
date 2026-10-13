@@ -10,8 +10,7 @@ quotient data I : U where
 def f : Bool -> I -> Nat
 | true i0 = zero 
 | true i1 = zero
-| false i0 = zero
-| false i1 = zero
+| false h = suc zero
 
 def apd for f 
-| (f true) seg = sorry
+| (f true) {x} {y} seg = rfl _

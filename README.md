@@ -26,3 +26,4 @@ Known missing parts:
 - guardness checking for apd clause
 - proof-irrelevance
 - observational computational rules of OTT
+- coverage checking for apd clauses
