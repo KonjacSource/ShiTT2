@@ -41,6 +41,9 @@ opnCls = unsafeDupablePerformIO $ newIORef M.empty
 insertCls :: Name -> ApdCls -> IO ()
 insertCls fname = modifyIORef opnCls . insertItem fname 
 
+removeCls :: Name -> IO ()
+removeCls = modifyIORef opnCls . M.delete
+
 reset :: IO ()
 reset = do
   writeIORef nextMeta 0

@@ -1,6 +1,7 @@
-module Elaboration 
-  (check, infer, unifyCatch, findType, checkPat, updateCxt, checkCover, 
-   CoverCheckingError(..), MissingPattern, splitCxt, checkCls, reportOpnCls) where
+{-# LANGUAGE RecordWildCards #-}
+module Elaboration
+  (check, infer, unifyCatch, findType, checkPat, updateCxt, checkCover,
+  CoverCheckingError(..), MissingPattern, splitCxt, checkCls, reportOpnCls, checkApdCover) where
 
 import Control.Exception
 import Control.Monad
@@ -218,25 +219,25 @@ infer cxt = \case
     t <- check cxt t ty
     pure (t, ty)
   -- R.Prop -> pure (Prop, VU)
-  R.Cast -> do 
+  R.Cast -> do
     pure (Prim Cast, evalCxt cxt castTy)
-  R.Apd -> do 
+  R.Apd -> do
     pure (Prim Apd, evalCxt cxt apdTy)
-  R.Rfl -> do 
+  R.Rfl -> do
     pure (Prim Rfl, evalCxt cxt rflTy)
   R.Oeq a u v -> do
     a <- check cxt a VU -- TODO: Prop-valued equality
     let av = evalCxt cxt a
-    u <- check cxt u av 
+    u <- check cxt u av
     v <- check cxt v av
     pure (applySp (Prim Oeq) [(a, Impl), (u, Expl), (v, Expl)], VU)
 
 -- apd : {A : U} {B : A → U} {x y : A} (f : (x : A) → B x) (h : x ~{A} y) → 
 -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (f x) =_{B y} f y
 apdTy :: Ty
-apdTy = Pi "A" Impl U $ 
-        Pi "B" Impl (Pi "_" Expl (Var 0) U) $ 
-        Pi "x" Impl (Var 1) $ 
+apdTy = Pi "A" Impl U $
+        Pi "B" Impl (Pi "_" Expl (Var 0) U) $
+        Pi "x" Impl (Var 1) $
         Pi "y" Impl (Var 2) $
         Pi "f" Expl (Pi "x" Expl (Var 3) (App (Var 3) (Var 0) Expl)) $
         Pi "h" Expl (applySp (Prim Oeq) [(Var 4, Impl), (Var 2, Expl), (Var 1, Expl)]) $
@@ -249,7 +250,7 @@ apdTy = Pi "A" Impl U $
             lhs = applySp (Prim Cast) $
               [ (eApp b x, casticit)
               , (eApp b y, casticit)
-              , (applySp (Prim Apd) 
+              , (applySp (Prim Apd)
                     [ (a, Impl), (Lam "_" Expl U, Impl)
                     , (x, Impl), (y, Impl), (b, Expl), (h, Expl)
                     ], Expl)
@@ -260,15 +261,15 @@ apdTy = Pi "A" Impl U $
 
 -- cast : [A B : U] → A ~{U} B → A → B
 castTy :: Ty
-castTy = Pi "A" casticit U $ 
+castTy = Pi "A" casticit U $
          Pi "B" casticit U $
          Pi "_" Expl (applySp (Prim Oeq) [(U, Impl), (Var 1, Expl), (Var 0, Expl)]) $
-         Pi "_" Expl (Var 2) $ 
+         Pi "_" Expl (Var 2) $
          Var 2
 
-rflTy :: Ty 
-rflTy = Pi "A" Impl U $ 
-        Pi "x" Expl (Var 0) $ 
+rflTy :: Ty
+rflTy = Pi "A" Impl U $
+        Pi "x" Expl (Var 0) $
         applySp (Prim Oeq) [(Var 1, Impl), (Var 0, Expl), (Var 0, Expl)]
 
 findType :: Cxt -> Lvl -> VTy
@@ -334,7 +335,7 @@ data UnifRes
 -- We need to update the portion of the context that comes after the unified variable.
 unify :: Cxt -> Val -> Val -> VTy -> IO UnifRes
 unify ctx u v t = do
-  putStrLn $ "Unifying: " ++ showVal ctx u ++ " and " ++ showVal ctx v ++ " at type " ++ showVal ctx t
+  -- putStrLn $ "Unifying: " ++ showVal ctx u ++ " and " ++ showVal ctx v ++ " at type " ++ showVal ctx t
   case (force' ctx u, force' ctx v, force' ctx t) of
     (VVar x, v, _)
       | x `notElem` fv (defs ctx) (lvl ctx) v ->
@@ -346,7 +347,7 @@ unify ctx u v t = do
       | consName c == consName c' && not (isQIT d) ->
           unifySp ctx us vs $ evalCxt ctx (consType c)
       | not (isQIT d) -> pure UnifFail
-    (VData d us, VData d' vs, _) 
+    (VData d us, VData d' vs, _)
       -- We assume the injectivity of datatype formers over indexes. I think it is safe without UA
       -- Which makes the dpm analysis for QIT constructors easier.
       | dataName d == dataName d ->
@@ -428,7 +429,7 @@ checkCls ctx func_name func_typ (R.RClause rps rhs) = do
 -- TODO : Change the return type to `IO ([(Pattern, Icit)], Spine, Cxt, VTy)`
 checkPat :: Bool -> Cxt -> R.RPatterns -> VTy -> IO ([(Pattern, Icit)], Cxt, VTy)
 checkPat isCons ctx [] ty
-  | isCons = case force' ctx ty of 
+  | isCons = case force' ctx ty of
     -- If we are elaborating constructor patterns, we need to make sure all implicit patterns are filled.
     -- i.e.
     -- data Id : U -> U -> U where 
@@ -481,30 +482,30 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (for
           (rps, rctx, rty) <- checkPat isCons ctx'' ps b_rest_updated
           pure ((p, i) : rps, rctx, rty)
         _ -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx a)
-    (Just (DefEq _)) | isQITCon c (qitInfo ctx) -> case M.lookup c (extraEq (qitInfo ctx)) of 
+    (Just (DefEq _)) | isQITCon c (qitInfo ctx) -> case M.lookup c (extraEq (qitInfo ctx)) of
         Nothing -> error "checkPat: impossible"
-        Just conEq -> case force' ctx a of 
-          VPrim Oeq eq_arg@(reverse -> [(VData d d_arg, Impl), (lhs, Expl), (rhs, Expl)]) | isQIT d -> do 
+        Just conEq -> case force' ctx a of
+          VPrim Oeq eq_arg@(reverse -> [(force' ctx -> VData d d_arg, Impl), (lhs, Expl), (rhs, Expl)]) | isQIT d -> do
             -- TODO: refactor, merge with the above code.
             let c_tele = eqTel conEq
             let c_ix = eqIx conEq
             let c_ty = evalCxt ctx $ getPathConType d c_tele c_ix (eqLhs conEq) (eqRhs conEq)
-            putStrLn $ "lhs: " ++ showVal ctx lhs ++ " rhs: " ++ showVal ctx rhs
-            putStrLn $ 
-              "Checking constructor " ++ c ++ "with tele: " ++ show c_tele ++ " and ix: " ++ show c_ix ++ "\n get c_ty: " ++ showVal ctx c_ty
+            -- putStrLn $ "lhs: " ++ showVal ctx lhs ++ " rhs: " ++ showVal ctx rhs
+            -- putStrLn $
+            --   "Checking constructor " ++ c ++ "with tele: " ++ show c_tele ++ " and ix: " ++ show c_ix ++ "\n get c_ty: " ++ showVal ctx c_ty
             (ps', ctx', c_ty') <- checkPat True ctx c_arg c_ty
             eq_args' <- case c_ty' of
-              VPrim Oeq sp@(reverse -> [(VData d' dsp, Impl), (lhs', Expl), (rhs', Expl)]) 
+              VPrim Oeq sp@(reverse -> [(VData d' dsp, Impl), (lhs', Expl), (rhs', Expl)])
                 | dataName d' == dataName d -> pure sp
               e -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx' e)
-            let oeqTy = Pi "A" Impl U $ 
-                        Pi "x" Expl (Var 0) $ 
-                        Pi "y" Expl (Var 1) $ 
+            let oeqTy = Pi "A" Impl U $
+                        Pi "x" Expl (Var 0) $
+                        Pi "y" Expl (Var 1) $
                         U
             -- Work mark
             let oeq_type = evalCxt ctx' oeqTy
             -- remember to unify lhs and rhs
-            putStrLn $ "Unifying: " ++ showSp ctx' eq_arg ++ " and " ++ showSp ctx' eq_args' ++ " at type " ++ showVal ctx' oeq_type
+            -- putStrLn $ "Unifying: " ++ showSp ctx' eq_arg ++ " and " ++ showSp ctx' eq_args' ++ " at type " ++ showVal ctx' oeq_type
             uni_res <- unifySp ctx' eq_arg eq_args' oeq_type
             ctx'' <- case uni_res of
               UnifOk c  -> pure c
@@ -517,9 +518,9 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (for
             let b_rest = (defs ctx'', b) $$ patVal'
             let b_rest_updated = evalCxt ctx'' (quoteCxt ctx'' b_rest)
             (rps, rctx, rty) <- checkPat isCons ctx'' ps b_rest_updated
-            pure ((p, i) : rps, rctx, rty)            
+            pure ((p, i) : rps, rctx, rty)
 
-          _ -> throwIO $ DefError ctx $ PMNoneEq (quoteCxt ctx a)  
+          t -> error (show t) -- throwIO $ DefError ctx $ PMNoneEq (quoteCxt ctx a)
     _ | null c_arg -> do -- Var pattern.
           let x = c
           let ctx' = bind ctx x a
@@ -552,8 +553,8 @@ patApp (PatVar x) p = error "patApp: impossible"
 -- TODO: modify checkPat function (more information is needed), so I don't need this function anymore.
 applyPat :: Cxt -> (Pattern, Val) -> PatternTele Empty -> VTy -> IO (Cxt, Pattern, Val, VTy)
 applyPat cxt (f, fv) [] ty = pure (cxt, f, fv, ty)
-applyPat cxt (f, fv) ((p, i):ps) ty = case force' cxt ty of 
-  VPi x i' a b | i == i' -> case (p, force' cxt a) of 
+applyPat cxt (f, fv) ((p, i):ps) ty = case force' cxt ty of
+  VPi x i' a b | i == i' -> case (p, force' cxt a) of
     (PatVar x', a') -> do
       let cxt' = bind cxt x' a'
       let b' = (defs cxt, b) $$ VVar (lvl cxt)
@@ -590,16 +591,18 @@ type ClauseLHS = [(Pattern, Icit)]
 
 type MissingPattern = [Spine]
 
-data CoverCheckingError = CoverMissPat MissingPattern | MeetIDKCons
-  deriving (Show)
+data CoverCheckingError
+  = CoverMissPat MissingPattern
+  | MeetIDKCons -- TODO: Is this necessary? IDK case should be filterred out in dpm check phase?
+  deriving Show
 
 data CoverRes
   = CoverOk
   | CoverStuck Lvl (PatternTele ()) -- Which variable is stucking, and where is it
   | CoverFail [(Cxt, Spine)] -- Meet a dead end
 
-checkCover :: Cxt -> FuncDef -> VTy -> Int -> [ClauseLHS] -> Either CoverCheckingError ()
-checkCover ctx fn fty arity clss = case testManySpine ctx fn clss [initSp] of
+checkCover :: Bool -> Cxt -> FuncDef -> VTy -> Int -> [ClauseLHS] -> Either CoverCheckingError ()
+checkCover genApdC ctx fn fty arity clss = case testManySpine genApdC fn clss [initSp] of
     Nothing -> Left MeetIDKCons
     Just [] -> Right ()
     Just sp -> Left . CoverMissPat $ map snd sp
@@ -620,12 +623,9 @@ checkCover ctx fn fty arity clss = case testManySpine ctx fn clss [initSp] of
 splitCxt :: Cxt -> Lvl -> Maybe [Cxt]
 splitCxt cxt x = case force' cxt (findType cxt x) of
   x_ty@(VData d d_arg) -> might $ do
-    fmap join $ forM (dataCons d) $ \c@(c_name, c_tele, c_ix) -> do
+    fmap join $ forM (dataCons d) $ \c@(c_name, c_tele, _) -> do
           -- split x to constructor c
           -- make a raw pattern
-          let makePs :: Telescope -> R.RPatterns
-              makePs [] = []
-              makePs ((x, i, _):xs) = (Right i, R.RPat ("_cov_chk_"++x) []) : makePs xs
           let p = R.RPat c_name (makePs c_tele)
           -- check the pattern against x's type
           cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl x_ty (Closure (env cxt) U)) >>= pure . Just)
@@ -641,7 +641,36 @@ splitCxt cxt x = case force' cxt (findType cxt x) of
               pure [cxt'']
             _ -> error "splitCxt: impossible"
   
-  _ -> error "splitCxt: impossible"
+  x_ty@(VPrim Oeq sp@[(a, _), (lhs, _), (rhs, _)])
+    | VData d d_arg <- force' cxt a 
+    -> might $ do 
+      let cons = fromJust $ M.lookup (dataName d) (extraEq' (qitInfo cxt))
+      fmap join $ forM cons $ \c -> do
+        let c_name = eqName c
+        let c_tele = eqTel c
+        -- split x to constructor c
+        -- make a raw pattern
+        let p = R.RPat c_name (makePs c_tele)
+        -- check the pattern against x's type
+        cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl (VPrim Oeq (reverse sp)) (Closure (env cxt) U)) >>= pure . Just) 
+                              `catch` \case
+                                DefError _ (UnsurePattern _ _) -> quitMight
+                                DefError _ (WrongPattern _ _) -> pure Nothing
+                                e -> error $ "impossible: " ++  show e
+        case cp of
+          Nothing -> pure []
+          Just ([(p', _)], cxt', _) -> do
+            let pv = p2v (defs cxt, qitInfo cxt) (lvl cxt) p'
+            let cxt'' = updateCxt cxt' x pv
+            pure [cxt'']
+          _ -> error "splitCxt: impossible"
+
+    
+  x_ty -> error $ "splitCxt: impossible: " ++ show x_ty
+  where
+    makePs :: Telescope -> R.RPatterns
+    makePs [] = []
+    makePs ((x, i, _):xs) = (Right i, R.RPat ("_cov_chk_"++x) []) : makePs xs
 
 -- Check a list of clause lhs against a spine
 -- If the spine can be matched by the patterns, return ()
@@ -652,7 +681,7 @@ testSpine defs clss cxt sp = go clss where -- cxt |- sp
   go = \case
     [] -> CoverFail [(cxt, sp)]
     (ps:rest) -> case match defs (env cxt) ps sp of
-      MatchSuc _ -> CoverOk 
+      MatchSuc _ -> CoverOk
       MatchFailed -> go rest -- move to next clause
       MatchStuck (BVar x ps) -> CoverStuck x ps
       _ -> error "impossible"
@@ -661,12 +690,14 @@ testSpine defs clss cxt sp = go clss where -- cxt |- sp
 -- Return `Nothing`, if there is one or more IDK constructors.
 -- Return `Just (_, True)`, if the splitting variable is a QIT element 
 genSpine :: Cxt -> Spine -> Lvl -> Maybe ([(Cxt, Spine)], Bool)
-genSpine cxt sp x = do 
+genSpine cxt sp x = do
     fst <- genSpine' cxt sp x
     case force' cxt (findType cxt x) of
-      VData d d_arg -> 
+      VData d d_arg ->
         pure (fst, isQIT d)
-      _ -> error "impossible"
+      VPrim Oeq [(force' cxt -> VData d d_arg, _),(lhs, _),(rhs, _)] -> 
+        pure (fst, False)
+      ty -> error $ "impossible" ++ show ty
   where
     genSpine' :: Cxt -> Spine -> Lvl -> Maybe [(Cxt, Spine)]
     genSpine' cxt sp x = do -- Maybe
@@ -676,27 +707,27 @@ genSpine cxt sp x = do
         let sp' = updateSp cxt' sp
         pure (cxt', sp')
 
-testManySpine :: Cxt -> FuncDef -> [ClauseLHS] -> [(Cxt, Spine)] -> Maybe [(Cxt, Spine)]
-testManySpine cxt f clss = \case
+testManySpine :: Bool -> FuncDef -> [ClauseLHS] -> [(Cxt, Spine)] -> Maybe [(Cxt, Spine)]
+testManySpine genApdC f clss = \case -- f will not be used, if genApdC=False
   [] -> Just []
   (cxt, sp):rest -> case testSpine (defs cxt) clss cxt sp of
-    CoverOk -> testManySpine cxt f clss rest
+    CoverOk -> testManySpine genApdC f clss rest
     CoverStuck l blk_pos -> do
       (gen, isqit) <- genSpine cxt sp l
       -- if isqit, we need to generate apd clauses,
-      when isqit $ do 
+      when (isqit && genApdC) $ do
         -- trace "found a QIT elim" $ pure ()
         unsafePerformIO $ Just <$> generateApdClauses' cxt f blk_pos
       left <- forM gen $ \ (cxt', sp') ->
-        testManySpine cxt f clss [(cxt', sp')]
-      right <- testManySpine cxt f clss rest
+        testManySpine genApdC f clss [(cxt', sp')]
+      right <- testManySpine genApdC f clss rest
       pure $ join left ++ right
     CoverFail sp' -> do
-      right <- testManySpine cxt f clss rest
+      right <- testManySpine genApdC f clss rest
       pure $ sp' ++ right
 
 generateApdClauses' :: Cxt -> FuncDef -> PatternTele () -> IO ()
-generateApdClauses' cxt f ps = do 
+generateApdClauses' cxt f ps = do
   -- putStrLn $ "Generating apd clauses for function: " ++ funcName f ++ " with patterns: " ++ show ps
   apd_cls <- generateApdClauses cxt f ps
   -- putStrLn $ "Generated apd clauses: " ++ showSp (apdCxt apd_cls) (apdSpn apd_cls)
@@ -715,9 +746,9 @@ generateApdClauses :: Cxt -> FuncDef -> PatternTele () -> IO ApdCls
 generateApdClauses cxt f ps' = do
   (cxt', fps, fpsv, fpsty) <- applyPat cxt (PatFunc (funcName f) [], VFunc f []) ps (evalCxt cxt $ funcType f)
   -- putStrLn $ "applyPat used: fpsv= " ++ showVal cxt' fpsv ++ "; fpsty= " ++ showVal cxt' fpsty
-  case force' cxt' fpsty of 
+  case force' cxt' fpsty of
     VPi x Expl a b -> -- a must be a QIT type 
-      case force' cxt' a of 
+      case force' cxt' a of
         VData d d_arg | isQIT d -> do
           let x_pat = PatVar "_x"
           let x_val = VVar (lvl cxt')
@@ -732,7 +763,7 @@ generateApdClauses cxt f ps' = do
           let cxt'xyh = bind cxt'xy "_h" h_ty
           -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} (λ z → B z) h) (fps x) =_{B y} fps y
           let rhsty ucxt (a, b, ufpsv, uxv, uyv, uhv) = -- u means user-provided
-                let b_ z = (defs ucxt, b) $$ z 
+                let b_ z = (defs ucxt, b) $$ z
                     bx = b_ uxv
                     by = b_ uyv
                     const_U = VLam "_" Expl (Closure (env ucxt) U)
@@ -750,8 +781,8 @@ generateApdClauses cxt f ps' = do
             rhsty
         _ -> error "impossible"
     _ -> error "impossible"
-  where 
-    ps = go [] ps' where 
+  where
+    ps = go [] ps' where
       go _ [] = error "impossible: where is the QIT pattern?"
       go acc ((PatMark (), i) : ps) = acc
       go acc ((p, i) : ps) = go (acc ++ [(fromJust $ noMark p, i)]) ps
@@ -760,7 +791,27 @@ generateApdClauses cxt f ps' = do
 reportOpnCls :: IO ()
 reportOpnCls = do
   cls <- readIORef opnCls
-  putStrLn "Opening congruences: " 
-  forM_ (M.toList cls) $ \(_, cs) -> do 
-    forM_ cs $ \ap -> do 
+  putStrLn "Opening congruences: "
+  forM_ (M.toList cls) $ \(_, cs) -> do
+    forM_ cs $ \ap -> do
       putStrLn $ "  apd " ++ showSp (apdCxt ap) (apdSpn ap)
+
+-- TODO: Cxt and Defs/QITInfo should be seperated
+checkApdCover :: (Defs, QITInfo) -> Name -> IO (Either CoverCheckingError ())
+checkApdCover (defs, qitInfo) fnName = do
+  cls <- readIORef opnCls
+  case M.lookup fnName cls of
+    Nothing -> error "impossible"
+    Just opns -> do
+      let cxtsp = (\ApdCls{..} -> (apdCxt{defs = defs, qitInfo = qitInfo}, reverse apdSpn)) <$> opns
+      lhss <- case M.lookup fnName (definedApd qitInfo) of
+            Nothing -> do
+              putStrLn $ "Error: There is no apd clause definition for funtion " ++ fnName -- make it better
+              pure []
+            Just lhss -> pure lhss
+      let res = testManySpine False (FuncDef "dummy-value" U []) lhss cxtsp
+      -- The function def is never used if the first arg is false.
+      pure $ case res of
+        Nothing -> Left MeetIDKCons
+        Just [] -> Right ()
+        Just sp -> Left . CoverMissPat $ map snd sp

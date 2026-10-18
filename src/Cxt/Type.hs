@@ -36,6 +36,7 @@ data ApdCls = ApdCls
   , apdRhsTy :: Cxt -> (VTy, Closure, Val, Val, Val, Val) -> VTy 
   -- ^ HOAS, input the context and values of user provided `A`, `B`, `f ps`, `x`, `y`, and `e`, 
   -- These values have nothing to do with apdCxt
+  -- I think this is not needed now.
   }
 
 type Defs = M.Map Name Def

@@ -51,7 +51,9 @@ match1 defs env pat val = case (pat, val) of
   (PatCon _ _, VPropTm)     -> MatchFailed
   (PatCon _ _, VPrim _ _)   -> MatchFailed
   (PatCon _ _, VProj {})    -> MatchFailed
-  (PatCon _ _, VPathCons _ _) -> error "TODO: Not supported" -- We hope we'd never need to match with path constructors, since they are irrelevant
+  (PatCon c ps, VPathCons p args) 
+    | length ps == length args && c == eqNameDef p ->  fmap (PatCon c) (match defs env ps args)
+  (PatCon c ps, VPathCons p args) -> MatchFailed 
   (PatFunc f ps, VFunc f' args)
     | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match defs env ps args)
   (PatFunc f ps, VHold f' args)
@@ -279,3 +281,4 @@ updateSp ctx = \case
 
 varr :: Cxt -> VTy -> VTy -> VTy
 varr ctx a b = VPi "_" Expl a (Closure (env ctx) $ quote (defs ctx) (lvl ctx + 1) b)
+

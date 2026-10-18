@@ -19,7 +19,7 @@ import Control.Monad (forM, when, unless, join, forM_)
 import GHC.Stack (HasCallStack)
 import Pretty (displayMetas, showDefs)
 import Data.IORef (readIORef)
-import Metacontext (nextMeta)
+import Metacontext
 import Debug.Trace (trace)
 import GHC.IO (unsafePerformIO)
 
@@ -138,7 +138,23 @@ getConstructors dat = map go (dataCons dat) where
   go2 c (as :> (a, i)) = App (go2 c as) a i
 
 checkProg' :: HasCallStack => (Defs, QITInfo) -> Program -> IO (Defs, QITInfo)
-checkProg' state [] = pure state
+checkProg' state [] = do 
+  -- At the end of a program, we check coverage for every apd clause
+  cls <- readIORef opnCls 
+  forM_ (M.keys cls) $ \fn -> do 
+    res <- E.checkApdCover state fn 
+    case res of 
+      Left E.MeetIDKCons -> error "meet idk case in apd coverage checking"  
+      Left (E.CoverMissPat ps) -> do 
+        putStrLn $ "There are unclosing congruences for function " ++ fn
+        putStrLn $ "Missing the following " ++ show (length ps) ++ " pattern(s):"
+        forM_ ps $ \sp ->
+          putStrLn $ " " ++ printSp sp
+
+      Right () -> do 
+        removeCls fn
+  pure state 
+        
 checkProg' (defs, qiti) ((sp, d):ds) = case d of
   RDefFunc d -> do
     f <- checkFunc ((emptyCxt sp){defs = defs}) d
@@ -321,21 +337,22 @@ checkFuncCover srcpos defs fname = do
         forM_ ps $ \sp ->
           putStrLn $ " " ++ printSp sp
       Left E.MeetIDKCons -> putStrLn $ "Error: cannot check exhaustiveness for function " ++ fname ++ " due to unknown existance of some constructors."
-      Right () -> putStrLn ("Function " ++ fname) >> E.reportOpnCls
+      Right () -> pure () -- putStrLn ("Function " ++ fname) >> E.reportOpnCls
+
+printSp :: Spine -> String
+printSp = \case
+  [] -> ""
+  rest :> (VCons c sp', i) -> printSp rest ++ " " ++ q i (consName c ++ printSp sp')
+  rest :> (VFunc c sp', i) -> printSp rest ++ " " ++ q i (funcName c ++ printSp sp')
+  rest :> (v, i) -> printSp rest ++ " " ++ q i "_"
   where
-    printSp :: Spine -> String
-    printSp = \case
-      [] -> ""
-      rest :> (VCons c sp', i) -> printSp rest ++ " " ++ q i (consName c ++ printSp sp')
-      rest :> (v, i) -> printSp rest ++ " " ++ q i "_"
-      where
-        q Impl s = "{" ++ s ++ "}"
-        q Expl s = "(" ++ s ++ ")"
+    q Impl s = "{" ++ s ++ "}"
+    q Expl s = "(" ++ s ++ ")"
 
 
 checkFuncCover' :: SourcePos -> Defs -> Name -> Either E.CoverCheckingError ()
 checkFuncCover' srcpos defs fname = do
     case M.lookup fname defs of
       Just (DefFunc f@(FuncDef _ fty (map clausePatterns -> ps))) -> do
-        E.checkCover ((emptyCxt srcpos) {defs = defs}) f (eval defs [] fty) (arity f) ps
+        E.checkCover True ((emptyCxt srcpos) {defs = defs}) f (eval defs [] fty) (arity f) ps
       _ -> error " impossible"

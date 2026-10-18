@@ -49,6 +49,7 @@ data DefElabError
   | DefiningApdForWrongFunction Name Name 
   | DefiningApdNotFullyApplied Name
   | DefiningApdForNonQITElim Name String
+  | NoApdClauseDefinedFor Name
   deriving (Show, Exception)
  
 data Error 
@@ -136,6 +137,8 @@ displayError file (DefError cxt e) = do
           printf "Defined an apd clause for %s with patterns %s, but it is not a QIT eliminator" name ps
         PMNoneEq t ->
           "A path constructor matched on non-equality type: " ++ showTm cxt t
+        NoApdClauseDefinedFor f -> 
+          "There is no apd clause defined for function " ++ show f
 
   printf "%s:%d:%d:\n" path linum colnum
   printf "%s |\n"    lpad
