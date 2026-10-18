@@ -2,28 +2,29 @@
 
 This is an experimental project that aims to be a typechecker for Observational Type Theory with support for Quotient Inductive-Inductive Types.
 
-## Motivation
+## Syntax
 
-I am reading Thorsten Altenkirch and Ambrus Kaposi et al.'s "type theory in type theory" series  of papers, and I am feeling uncomfortable with the fact that their formalization are based on a bunch of postulated rules in Agda.
+HoTT Book styled syntax, with standalone apd clauses.
 
-## Features
-
-We have an proof irrelevant observational equality `a ~{A} b`, for QITs, the equality between path can be computed out as following:
+Example
 
 ```agda
-quotient data I : Type where 
-  | i0 : I 
-  | i1 : I 
-  | seg : i0 ~{I} i1
+data Bool : U where
+| true : Bool
+| false : Bool
+
+quotient data I : U where 
+| i0 : I 
+| i1 : I 
+| seg : i0 ~ i1 
+
+def f : Bool -> I -> Nat
+| true i0 = zero 
+| true i1 = zero
+| false h = suc zero
+
+def apd for f 
+| (f true) {x} {y} seg = rfl _
 ```
 
-Then `i0 ~{I} i1` is a canonical form with a single constructor `seg`.
-
----
-
-This is just an experimental project currently, and I will make it better someday.
-Known missing parts:
-- guardness checking for apd clause
-- proof-irrelevance
-- observational computational rules of OTT
-- coverage checking for apd clauses
+Note. In this example, you have to give an apd clause for (f true) to show congruence, but no need for (f false).
