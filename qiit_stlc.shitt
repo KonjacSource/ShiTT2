@@ -1,0 +1,128 @@
+mutual 
+  
+  data Cx : U 
+  quotient data Sb : Cx -> Cx -> U
+  data Ty : U
+  quotient data Tm : Cx -> Ty -> U 
+
+begin
+
+  data Cx 
+  | Emp : Cx 
+  | Ext : Cx -> Ty -> Cx 
+
+  data Ty 
+  | Unit : Ty
+  | Void : Ty
+  | Arr : Ty -> Ty -> Ty 
+
+  data Tm 
+  | here   : {G : Cx} {A : Ty} -> Tm (Ext G A) A 
+  | lam    : {G : Cx} {A : Ty} {B : Ty} -> Tm (Ext G A) B -> Tm G (Arr A B)
+  | app    : {G : Cx} {A : Ty} {B : Ty} -> Tm G (Arr A B) -> Tm (Ext G A) B
+  | tt     : {G : Cx} -> Tm G Unit
+  | absrd  : {G : Cx} {A : Ty} -> Tm (Ext G Void) A
+  | subst  : {G D : Cx} {A : Ty} -> Tm G A -> Sb D G -> Tm D A
+
+  data Tm
+  | ttEta     : {G : Cx} (a : Tm G Unit) -> a ~ tt
+  | fnBeta    : {G : Cx} {A B : Ty} (b : Tm (Ext G A) B) -> (app (lam b)) ~ b
+  | fnEta     : {G : Cx} {A B : Ty} (f : Tm G (Arr A B)) -> (lam (app f)) ~ f
+  | absrdBeta : {G : Cx} {A : Ty} (a : Tm (Ext G Void) A) -> absrd ~ a
+
+  data Sb
+  | id    : {G : Cx} -> Sb G G 
+  | emp   : {G : Cx} -> Sb G Emp 
+  | comp  : {G D X : Cx} -> Sb D G -> Sb X D -> Sb X G
+  | ext   : {G D : Cx} {A : Ty} -> Sb D G -> Tm D A -> Sb D (Ext G A)
+  | wk    : {G : Cx} {A : Ty} -> Sb (Ext G A) G
+  
+  data Sb
+  | idComp : (G D : Cx) 
+          -> (g : Sb D G)
+          -> (comp id g) ~ g
+  | compId : (G D : Cx)
+          -> (g : Sb D G)
+          -> (comp g id) ~ g 
+  | compAss : (G0 G1 G2 G3 : Cx)
+          -> (g0 : Sb G1 G2) (g1 : Sb G2 G1) (g2 : Sb G3 G2)
+          -> (comp g0 (comp g1 g2)) ~ (comp (comp g0 g1) g2)
+  | empUniq : (G : Cx)
+          -> (g : Sb G Emp)
+          -> g ~ emp
+  | sbInit : {G D : Cx} {A : Ty}
+          -> (g : Sb D G) (a : Tm D A)
+          -> (comp wk (ext g a)) ~ g
+  | sbEta  : {G D : Cx} {A : Ty}
+          -> (g : Sb D (Ext G A))
+          -> g ~ (ext (comp wk g) (subst here g)) 
+
+  data Tm
+  | sbId   : {G : Cx} {A : Ty} -> (a : Tm G A) -> (subst a id) ~ a 
+  | sbComp : {G0 G1 G2 : Cx} {A : Ty} 
+          -> (a : Tm G0 A) (g0 : Sb G1 G0) (g1 : Sb G2 G1) 
+          -> (subst a (comp g0 g1)) ~ (subst (subst a g0) g1)
+  | sbHere : {G D : Cx} {A : Ty}
+          -> (g : Sb D G) (a : Tm D A) 
+          -> (subst here (ext g a)) ~ a
+  | sbLam  : {G D : Cx} {A B : Ty}
+          -> (b : Tm (Ext G A) B) (g : Sb D G)
+          -> (subst (lam b) g) ~ (lam (subst b (ext (comp g wk) here)))
+  | sbApp  : {G D : Cx} {A B : Ty}
+          -> (f : Tm G (Arr A B)) (g : Sb D (Ext G A))
+          -> (subst (app f) g) ~ (subst (app (subst f (comp wk g))) (ext id (subst here g)))
+             -- (app f) [ γ ] ~ app (f [ 𝐩 ∘ γ ]) [ id ⸴ 𝐪 [ γ ] ]
+  | sbTT   : {G D : Cx}
+          -> {g : Sb G D}
+          -> (subst tt g) ~ tt 
+  | sbAbs  : {G D : Cx} {A : Ty}
+          -> (g : Sb D (Ext G Void)) (a : Tm D A) 
+          -> (subst absrd g) ~ a 
+
+end
+
+data One : U 
+| one : One
+
+-- standard model
+mutual
+  def cx : Cx -> U -- actually it should be U1, but we have type-in-type 
+  def ty : Ty -> U -- same as above
+  def tm : {G : Cx} {A : Ty} -> Tm G A -> cx G -> ty A
+  def sb : {G D : Cx} -> Sb G D -> cx G -> cx D 
+begin 
+
+  def cx 
+  | Emp = One
+  | (Ext G A) = Pair (cx G) (ty A)
+
+  def ty
+  | Unit = One
+  | Void = False
+  | (Arr A B) = ty A -> ty B
+
+  def tm 
+  | here        (pair x a) = a
+  | (lam b)     x          = \ a . tm b (pair x a)
+  | (app t)     (pair x a) = tm t x a
+  | tt          x          = one
+  | absrd       (pair x a) = absurd a
+  | (subst a g) x          = tm a (sb g x)
+  
+  def sb
+  | id         x          = x
+  | emp        x          = one
+  | (comp g d) x          = sb g (sb d x)
+  | (ext g a)  x          = pair (sb g x) (tm a x) 
+  | wk         (pair x a) = x
+
+end
+
+def fnext : {A B : U} {f g : A -> B} (h : (x : A) -> (f x) ~ (g x)) -> f ~ g 
+
+def uniqOne : {a : One} -> a ~ one
+| {one} = rfl _
+
+def apd for tm
+| (tm {G} {A}) (ttEta a) = (fnext {_} {_} {tm a} {tm tt} (\ x . uniqOne))
+

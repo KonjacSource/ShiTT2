@@ -1,40 +1,29 @@
 -- STLC
+data Ty : U
+| top : Ty 
+| arr : Ty -> Ty -> Ty
 
-mutual 
+data Ctx 
+| empty : Ctx 
+| extend : (G : Ctx) -> Ty -> Ctx
 
-  data Ctx : U 
-  data Ty : U
-  data Tm : (G : Ctx) -> Ty -> U
-  data Ix : Ctx -> U
-  def lookup : {G : Ctx} -> Ix G -> Ty 
-
-begin
-
-  data Ctx 
-  | empty : Ctx 
-  | extend : (G : Ctx) -> Ty -> Ctx
+data Ix : Ctx -> U
+| iz : {G : Ctx} {A : Ty} -> Ix (extend G A)
+| is : {G : Ctx} {A : Ty} -> Ix G -> Ix (extend G A)
   
-  data Ty
-  | top : Ty 
-  | arr : Ty -> Ty -> Ty
+def lookup : {G : Ctx} -> Ix G -> Ty
+| {extend _ A} iz = A 
+| {extend _ A} (is i) = lookup i
+| {empty} x = absurd x
 
-  data Tm 
-  | tt : {G : Ctx} -> Tm G top
-  | lam : {G : Ctx} {A B : Ty} -> Tm (extend G A) B -> Tm G (arr A B)
-  | app : {G : Ctx} {A B : Ty} -> Tm G (arr A B) -> (Tm G A) -> Tm G B
-  | var : {G : Ctx} (i : Ix G) -> Tm G (lookup i)
-  | wk : {G : Ctx} {A B : Ty} -> Tm G A -> Tm (extend G B) A
+
+data Tm : (G : Ctx) -> Ty -> U
+| tt : {G : Ctx} -> Tm G top
+| lam : {G : Ctx} {A B : Ty} -> Tm (extend G A) B -> Tm G (arr A B)
+| app : {G : Ctx} {A B : Ty} -> Tm G (arr A B) -> (Tm G A) -> Tm G B
+| var : {G : Ctx} (i : Ix G) -> Tm G (lookup i)
+| wk : {G : Ctx} {A B : Ty} -> Tm G A -> Tm (extend G B) A
   
-  data Ix 
-  | iz : {G : Ctx} {A : Ty} -> Ix (extend G A)
-  | is : {G : Ctx} {A : Ty} -> Ix G -> Ix (extend G A)
-
-  def lookup
-  | {extend _ A} iz = A 
-  | {extend _ A} (is i) = lookup i
-  | {empty} x = absurd x
-
-end
 
 data Val : {A : Ty} -> Tm empty A -> U where
 | vlam : {A B : Ty} (t : Tm (extend empty A) B) -> Val (lam t)

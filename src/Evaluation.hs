@@ -88,10 +88,11 @@ vApp defs t u i = case force defs t of
         vAppSp defs (evalFun defs [] f (funcClauses f) sp') rest
   VHold f sp -> VHold f (sp :> (u,i))
   VCons c sp -> VCons c (sp :> (u,i))
+  VPathCons c sp -> VPathCons c (sp :> (u, i))
   VData d sp -> VData d (sp :> (u,i))
   VPrim Cast vs -> VPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
   VPrim p vs  -> VPrim p (vs :> (u, i))
-  t           -> error "IMPOSSIBLE"
+  t           -> error $ "IMPOSSIBLE: " ++ show t
 
 -- | Make sure `(length sp) <= arity f`
 evalFun :: HasCallStack => Defs -> Env -> FuncDef -> [Clause] -> Spine -> Val

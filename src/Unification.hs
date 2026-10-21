@@ -139,10 +139,6 @@ unify defs env l t u = case (force defs t, force defs u) of
     (VFunc f sp , VHold f' sp'   ) -> unifyFn (f, sp) (f', sp') 
     (VHold f sp , VFunc f' sp'   ) -> unifyFn (f, sp) (f', sp')
     
-    (t          , VFunc f  sp    ) -> unifyWithEvalFn t (f, sp)
-    (VFunc f  sp, t              ) -> unifyWithEvalFn t (f, sp)
-    (t          , VHold f  sp    ) -> unifyWithEvalFn t (f, sp)
-    (VHold f  sp, t              ) -> unifyWithEvalFn t (f, sp)
 
     (VCons c sp , VCons c' sp'   ) | consName c == consName c' -> unifySp defs env l sp sp' 
     (VData d sp , VData d' sp'   ) | dataName d == dataName d' -> unifySp defs env l sp sp'
@@ -154,10 +150,17 @@ unify defs env l t u = case (force defs t, force defs u) of
       | unsafePerformIO $ unifyCast vs t -> pure ()
     (t, VPrim Cast vs)
       | unsafePerformIO $ unifyCast vs t -> pure ()
+    (VPrim Apd _, VPrim Apd _) -> pure () -- Fake prop irrelevence
     (VPrim p vs, VPrim p' vs')
       | p == p' -> unifySp defs env l vs vs'
     (VProj v x vs, VProj v' x' vs')
       | x == x' -> unify defs env l v v' >> unifySp defs env l vs vs'
+
+    (t          , VFunc f  sp    ) -> unifyWithEvalFn t (f, sp)
+    (VFunc f  sp, t              ) -> unifyWithEvalFn t (f, sp)
+    (t          , VHold f  sp    ) -> unifyWithEvalFn t (f, sp)
+    (VHold f  sp, t              ) -> unifyWithEvalFn t (f, sp)
+
     _                            -> throwIO UnifyError  -- rigid mismatch error
   where 
     unifyFn :: (FuncDef, Spine) -> (FuncDef, Spine) -> IO ()
@@ -169,7 +172,6 @@ unify defs env l t u = case (force defs t, force defs u) of
                                   Nothing -> trace (show t ++ "\n" ++ funcName f ++ " " ++ show sp) $ throwIO UnifyError 
     unifyCast :: Spine -> Val -> IO Bool
     unifyCast vs@(reverse -> [(a, _), (b, _), (p, _), (x, _)]) t = do 
-      -- putStrLn $ "conversion on cast"
       b <- tryUnify defs env l a b 
       if b then 
         unify defs env l x t >> pure True
@@ -177,13 +179,15 @@ unify defs env l t u = case (force defs t, force defs u) of
     unifyCast _ _ = pure False
 
 -- | try unifying, if fails, restore the metacontext and return False
+-- | TODO: We do not want to solve metas during trying unification, 
+-- |       so we need bool arg in unify to control this
 tryUnify :: Defs -> Env -> Lvl -> Val -> Val -> IO Bool
 tryUnify defs env l t u = do 
-  -- putStrLn $ "try unifying " ++ show t ++ " and " ++ show u
   nm <- readIORef nextMeta
   mc <- readIORef mcxt
-  unify defs env l t u >> pure True 
-    `catch` \UnifyError -> do 
+  (unify defs env l t u >> putStrLn "Try Succ" >> pure True) 
+    `catch` \UnifyError -> do
+      putStrLn "Try Failed" 
       writeIORef nextMeta nm
       writeIORef mcxt mc
       pure False

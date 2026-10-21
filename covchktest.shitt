@@ -1,0 +1,11 @@
+data Bool : U where 
+| true : Bool
+| false : Bool
+
+def f : Bool -> Nat
+| true = zero
+| false = suc zero
+
+def congf : {x y : Bool} -> Id x y -> Id (f x) (f y) 
+| (refl true) = refl zero
+| (refl false) = refl (suc zero)

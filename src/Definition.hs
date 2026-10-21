@@ -119,7 +119,9 @@ data RApdClause = RApdClause
   , apdRhsR  :: R.Tm        -- ^ rhs
   }
 
-data Header = FunHeader Name R.Tm | DataHeader Name Bool R.Tm -- true for qit
+data Header 
+  = FunHeader Name R.Tm 
+  | DataHeader Name Bool R.Tm -- true for qit
   deriving Show 
 
 data Body = FunBody Name [R.RClause] | DataBody Name [(Name, R.Tm)]

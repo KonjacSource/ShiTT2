@@ -55,7 +55,7 @@ preludeSrc = unlines
   , "    (a : A) (b : A) (p : Id a b) -> P a b p"
   , "| A P m a b (refl x) = m x"
 
-  , "data Void : U where"
+  , "data False : U where"
 
   , "def the : (A : U) -> A -> A"
   , "| A x = x"
@@ -66,9 +66,10 @@ preludeSrc = unlines
 
   , "data Ex : (A : U) -> (A -> U) -> U where"
   , "| ex : {A : U} {P : A -> U} (x : A) -> P x -> Ex A P"
+
+  , "data Pair : (A B : U) -> U where"
+  , "| pair : {A B : U} -> A -> B -> Pair A B"
   
-  , "data Unit : U where"
-  , "| tt : Unit"
   ]
 
 --------------------------------------------------------------------------------
