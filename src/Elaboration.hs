@@ -762,23 +762,10 @@ generateApdClauses cxt f ps' = do
           let h_ty = vAppSp (defs cxt'xy) (VPrim Oeq []) $ [] :> (a, Impl) :> (x_val, Expl) :> (y_val, Expl)
           let cxt'xyh = bind cxt'xy "_h" h_ty
           -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} (λ z → B z) h) (fps x) =_{B y} fps y
-          let rhsty ucxt (a, b, ufpsv, uxv, uyv, uhv) = -- u means user-provided
-                let b_ z = (defs ucxt, b) $$ z
-                    bx = b_ uxv
-                    by = b_ uyv
-                    const_U = VLam "_" Expl (Closure (env ucxt) U)
-                    lam_B = VLam "z" Expl b
-                    apd_h_sp = [(a, Impl), (const_U, Impl), (uxv, Impl), (uyv, Impl), (lam_B, Expl), (uhv, Expl)]
-                    apd_h = vAppSp (defs ucxt) (VPrim Apd []) apd_h_sp
-                    cast_sp = [(bx, casticit), (by, casticit), (apd_h, Expl), (vApp (defs ucxt) ufpsv uxv Expl, Expl)]
-                    lhs = vAppSp (defs ucxt) (VPrim Cast []) cast_sp
-                    rhs = vApp (defs ucxt) ufpsv uyv Expl
-                in  vAppSp (defs ucxt) (VPrim Oeq []) [(by, Impl), (lhs, Expl), (rhs, Expl)]
           pure $ ApdCls
             cxt'xyh
             pats
             vals
-            rhsty
         _ -> error "impossible"
     _ -> error "impossible"
   where

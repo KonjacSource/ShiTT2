@@ -33,10 +33,6 @@ data ApdCls = ApdCls
   { apdCxt   :: Cxt               -- the context including the variables bound in `ps`, `x`, `y`, and `e`
   , apdPat   :: PatternTele Empty -- the pattern `(f ps, {x, y}, e)`, every user clause must be matchable in here
   , apdSpn   :: Spine             -- the spine applying to apd, `(f ps, {x, y}, e)`, user clauses must cover this spine
-  , apdRhsTy :: Cxt -> (VTy, Closure, Val, Val, Val, Val) -> VTy 
-  -- ^ HOAS, input the context and values of user provided `A`, `B`, `f ps`, `x`, `y`, and `e`, 
-  -- These values have nothing to do with apdCxt
-  -- I think this is not needed now.
   }
 
 type Defs = M.Map Name Def
