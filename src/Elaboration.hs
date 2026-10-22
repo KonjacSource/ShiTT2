@@ -350,7 +350,7 @@ unify ctx u v t = do
     (VData d us, VData d' vs, _)
       -- We assume the injectivity of datatype formers over indexes. I think it is safe without UA
       -- Which makes the dpm analysis for QIT constructors easier.
-      | dataName d == dataName d ->
+      | dataName d == dataName d' ->
           unifySp ctx us vs $ evalCxt ctx (dataType d)
       | otherwise -> pure UnifFail
     (u, v, _) ->
@@ -359,16 +359,16 @@ unify ctx u v t = do
           pure UnifStuck
 
 unifySp :: HasCallStack => Cxt -> Spine -> Spine -> VTy -> IO UnifRes
-unifySp ctx us vs ts = case (reverse us, reverse vs, ts) of
-  ([], [], _) -> pure $ UnifOk ctx
-  ((force' ctx -> u, i1):us, (force' ctx -> v, i2):vs, VPi x i3 t b) | i1 == i2 -> do
-    uni_res <- unify ctx (updateVal ctx u) (updateVal ctx v) t
-    case uni_res of
-      UnifOk ctx' ->
-        let u' = updateVal ctx' u in
-        unifySp ctx' us vs ((defs ctx, b) $$ u')
-      e -> pure e
-  _ -> throwIO $ DefError ctx $ PatArgMismatch
+unifySp ctx us vs ts = go ctx (reverse us) (reverse vs) ts where
+  go ctx []                         []                          _ = pure $ UnifOk ctx
+  go ctx ((force' ctx -> u, i1):us) ((force' ctx -> v, i2):vs) (VPi x i3 t b) 
+    | i1 == i2 = do
+      uni_res <- unify ctx (updateVal ctx u) (updateVal ctx v) t
+      case uni_res of
+        UnifOk ctx' -> go ctx' us vs ((defs ctx, b) $$ updateVal ctx' u)
+        e -> pure e
+  go ctx _ _ _ = throwIO $ DefError ctx PatArgMismatch
+
 
 freshVal :: Defs -> [Val] -> [Val] -> Val -> Val
 freshVal def from to = eval def to . quote def (Lvl (length from))
@@ -641,7 +641,7 @@ splitCxt cxt x = case force' cxt (findType cxt x) of
               pure [cxt'']
             _ -> error "splitCxt: impossible"
   
-  x_ty@(VPrim Oeq sp@[(a, _), (lhs, _), (rhs, _)])
+  x_ty@(VPrim Oeq sp@([]:>(a, _):>(lhs, _):>(rhs, _)))
     | VData d d_arg <- force' cxt a 
     -> might $ do 
       let cons = fromJust $ M.lookup (dataName d) (extraEq' (qitInfo cxt))
@@ -652,7 +652,7 @@ splitCxt cxt x = case force' cxt (findType cxt x) of
         -- make a raw pattern
         let p = R.RPat c_name (makePs c_tele)
         -- check the pattern against x's type
-        cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl (VPrim Oeq (reverse sp)) (Closure (env cxt) U)) >>= pure . Just) 
+        cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl (VPrim Oeq sp) (Closure (env cxt) U)) >>= pure . Just) 
                               `catch` \case
                                 DefError _ (UnsurePattern _ _) -> quitMight
                                 DefError _ (WrongPattern _ _) -> pure Nothing
@@ -695,7 +695,7 @@ genSpine cxt sp x = do
     case force' cxt (findType cxt x) of
       VData d d_arg ->
         pure (fst, isQIT d)
-      VPrim Oeq [(force' cxt -> VData d d_arg, _),(lhs, _),(rhs, _)] -> 
+      VPrim Oeq ([]:>(force' cxt -> VData d d_arg, _):>(lhs, _):>(rhs, _)) -> 
         pure (fst, False)
       ty -> error $ "impossible" ++ show ty
   where
@@ -759,7 +759,7 @@ generateApdClauses cxt f ps' = do
           let pats = [(fps, Expl), (x_pat, Impl), (y_pat, Impl), (h_pat, Expl)]
           let vals = [(fpsv, Expl), (x_val, Impl), (y_val, Impl), (h_val, Expl)]
           let cxt'xy = bind (bind cxt' "_x" a) "_y" a
-          let h_ty = vAppSp (defs cxt'xy) (VPrim Oeq []) [(a, Impl), (x_val, Expl), (y_val, Expl)]
+          let h_ty = vAppSp (defs cxt'xy) (VPrim Oeq []) $ [] :> (a, Impl) :> (x_val, Expl) :> (y_val, Expl)
           let cxt'xyh = bind cxt'xy "_h" h_ty
           -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} (λ z → B z) h) (fps x) =_{B y} fps y
           let rhsty ucxt (a, b, ufpsv, uxv, uyv, uhv) = -- u means user-provided

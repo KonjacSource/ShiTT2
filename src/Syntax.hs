@@ -104,9 +104,7 @@ noMetas = \case
   Proj t _ -> noMetas t
 
 
--- NOTE. The order of TSpine is completely messed up, somewhere it is reversed, somewhere it is not. 
--- And somewhere the reversing is cancelled out, so it works well. 
--- It is confusing. I'll fix it later.
+-- f x y z = applySp f [(x, _), (y, _), (z, _)]
 type TSpine = [(Tm, Icit)]
 
 applySp :: Tm -> TSpine -> Tm

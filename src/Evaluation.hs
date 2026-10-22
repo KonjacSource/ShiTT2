@@ -84,8 +84,9 @@ vApp defs t u i = case force defs t of
   -- env is used here,  when t is a meta solution, so that env = [], then t must be a closed term. so sp is empty too.
   VFunc f sp
     | length sp + 1 < arity f -> evalFun defs [] f (funcClauses f) (sp :> (u, i))
-    | otherwise -> let (sp', rest) = splitAt (arity f) (sp :> (u,i)) in
-        vAppSp defs (evalFun defs [] f (funcClauses f) sp') rest
+    | otherwise -> 
+        let (rest, sp') = splitAt (length sp + 1 - arity f) (sp :> (u,i)) in
+          vAppSp defs (evalFun defs [] f (funcClauses f) sp') rest
   VHold f sp -> VHold f (sp :> (u,i))
   VCons c sp -> VCons c (sp :> (u,i))
   VPathCons c sp -> VPathCons c (sp :> (u, i))

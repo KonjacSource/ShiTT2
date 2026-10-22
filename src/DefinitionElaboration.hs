@@ -97,7 +97,7 @@ checkCons s defs dat (c, ty) = do
     Just (ispath, ts, args) 
       | not ispath -> pure $ Left(c, ts, args) -- here args is indexes 
       | ispath && isQIT dat -> do 
-          let [] :> (a, Impl) :> (lhs, Expl) :> (rhs, Expl) = args -- lhs =_{a} rhs
+          let [(a, Impl), (lhs, Expl), (rhs, Expl)] = args -- lhs =_{a} rhs
           case goApp a of 
             Just (ispath', ix)
               | not ispath' -> pure $ Right $ EqCons dat c ts lhs rhs ix
@@ -114,7 +114,7 @@ checkCons s defs dat (c, ty) = do
     goApp :: Tm -> Maybe (Bool, TSpine)
     goApp (App a b i) = do
       (ispath, as) <- goApp a
-      pure (ispath, as :> (b,i))
+      pure (ispath, as ++ [(b,i)])
     goApp (Call n)
       | n == dataName dat = Just (False, [])
     goApp (Prim Oeq) = Just (True, [])
@@ -129,13 +129,10 @@ checkCons s defs dat (c, ty) = do
 getConstructors :: DataDef -> [(Name, ConsDef)]
 getConstructors dat = map go (dataCons dat) where
 
-  go (c, ts, ix) = (c, ConsDef c dat (go1 ts (go2 (Call (dataName dat)) ix)))
+  go (c, ts, ix) = (c, ConsDef c dat (go1 ts (applySp (Call (dataName dat)) ix)))
 
   go1 [] c = c
   go1 ((x, i, t):xs) c = Pi x i t $ go1 xs c
-
-  go2 c [] = c
-  go2 c (as :> (a, i)) = App (go2 c as) a i
 
 checkProg' :: HasCallStack => (Defs, QITInfo) -> Program -> IO (Defs, QITInfo)
 checkProg' state [] = do 

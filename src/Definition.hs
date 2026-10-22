@@ -61,15 +61,11 @@ lookupCons (DataDef d _ cons _) c = go cons where
     | otherwise = go rest
 
 getConsType :: DataDef -> Telescope -> TSpine -> Tm 
-getConsType d [] ix = go (Call $ dataName d) ix where 
-  go t [] = t
-  go t (as :> (a, i)) = App (go t as) a i 
+getConsType d [] ix = applySp (Call $ dataName d) ix
 getConsType d ((x, i, t):ts) ix = Pi x i t $ getConsType d ts ix 
 
 getPathConType :: DataDef -> Telescope -> TSpine -> Tm -> Tm -> Tm 
-getPathConType d [] ix lhs rhs = applySp (Prim Oeq) [(go (Call $ dataName d) ix, Impl), (lhs, Expl), (rhs, Expl)] where 
-  go t [] = t
-  go t (as :> (a, i)) = App (go t as) a i 
+getPathConType d [] ix lhs rhs = applySp (Prim Oeq) [(applySp (Call $ dataName d) ix, Impl), (lhs, Expl), (rhs, Expl)]
 getPathConType d ((x, i, t):ts) ix lhs rhs = Pi x i t $ getPathConType d ts ix lhs rhs
 
 dataType :: DataDef -> Ty 

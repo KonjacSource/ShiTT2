@@ -71,7 +71,7 @@ begin
   | sbApp  : {G D : Cx} {A B : Ty}
           -> (f : Tm G (Arr A B)) (g : Sb D (Ext G A))
           -> (subst (app f) g) ~ (subst (app (subst f (comp wk g))) (ext id (subst here g)))
-             -- (app f) [ γ ] ~ app (f [ 𝐩 ∘ γ ]) [ id ⸴ 𝐪 [ γ ] ]
+             -- (app f) [ g ] ~ app (f [ wk . g ]) [ id , q [ g ] ]
   | sbTT   : {G D : Cx}
           -> {g : Sb G D}
           -> (subst tt g) ~ tt 
