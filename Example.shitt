@@ -21,9 +21,6 @@ def addComm : {a b : Nat} -> Id (add a b) (add b a)
     (symm addSucR)
 
 
-{-
-
-
 def cong : {A B : U} {x y : A} (f : A -> B) -> Id x y -> Id (f x) (f y) 
 | f (refl x) = refl (f x)
 
@@ -69,7 +66,4 @@ def t : {a b : Nat} (i : I) -> T a b i
 | {a} {b} i1 = replicate (add b a)
 
 def apd for t 
-| (t {a} {b}) seg = sorry -- with proof-irrelevenc, here should be smth like: apd replicate addCommO
-
-
--}
+| (t {a} {b}) seg = apd replicate addCommO

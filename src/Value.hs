@@ -1,5 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
-
 module Value where
 
 import Common
@@ -19,7 +17,7 @@ data Val
   | VPi Name Icit ~VTy {-# unpack #-} Closure
   | VU
   | VAbsurd Val
-  | VFunc FuncDef Spine
+  | VFunc FuncDef Spine -- TODO: Change the FuncDefs to Name. Sometimes the FuncDef might be out of date.
   | VHold FuncDef Spine -- Clauses are exhausted, but the function is still stucked (a neutral term forever)
   | VData DataDef Spine 
   | VCons ConsDef Spine

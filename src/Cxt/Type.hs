@@ -6,6 +6,8 @@ import qualified Data.Map as M
 import Data.Set
 import Syntax
 import Definition
+import GHC.Stack
+import Data.IORef
 
 
 -- Elaboration context
@@ -21,8 +23,6 @@ data Cxt = Cxt              -- used for:
   , types  :: Types         -- raw name lookup, pretty printing
   , bds    :: [BD]          -- fresh meta creation
   , pos    :: SourcePos     -- error reporting
-  , defs   :: Defs
-  , qitInfo:: QITInfo
   }
 
 -- opening apd clauses, indexed by the function name
@@ -43,6 +43,25 @@ data QITInfo = QITInfo
   , definedApd :: M.Map Name [PatternTele Empty] -- for which (f ps, {x, y}, e) apd is defined, indexed by the name of `f`
   }
 
+type HasGlobal = (?defs :: Defs, ?qitInfo :: QITInfo, HasCallStack)
+
+withDefs :: (?qitInfo :: QITInfo) => Defs -> (HasGlobal => a) -> a
+withDefs defs act = let ?defs = defs in act
+
+withQITI :: (?defs :: Defs) => QITInfo -> (HasGlobal => a) -> a
+withQITI qiti act = let ?qitInfo = qiti in act
+
+withGlobal :: Defs -> QITInfo -> (HasGlobal => a) -> a
+withGlobal defs qiti act = let ?defs = defs; ?qitInfo = qiti in act
+
+withGlobal' :: IORef (Defs, QITInfo) -> (HasGlobal => IO a) -> IO a
+withGlobal' defsR act = do
+  (defs, qiti) <- readIORef defsR
+  let ?defs = defs
+      ?qitInfo = qiti
+  act 
+
+
 insertEqCon :: EqCons -> QITInfo -> QITInfo
 insertEqCon eqcons qiti = 
   qiti { extraEq = M.insert (eqName eqcons) eqcons (extraEq qiti)
@@ -52,5 +71,6 @@ insertApd :: Name -> PatternTele Empty -> QITInfo -> QITInfo
 insertApd f ps qiti = 
   qiti { definedApd = insertItem f ps (definedApd qiti) }
 
-isQITCon :: Name -> QITInfo -> Bool
-isQITCon c qiti = M.member c (extraEq qiti)
+isQITCon :: HasGlobal => Name -> Bool
+isQITCon c = M.member c (extraEq ?qitInfo)
+

@@ -22,8 +22,7 @@ import Data.IORef
 import Data.Char (isSpace)
 import Definition (Def(DefFunc))
 import Errors (TopLevelError(..))
-
-
+import Cxt.Type
 preludeSrc = unlines
   [ "data Nat where"
   , "| zero : Nat"
@@ -86,44 +85,45 @@ mainWith :: IO [String] -> IO (P.Tm, String) -> IO ()
 mainWith getOpt getRaw = do
   reset
   prelude <- parseStringProgram "(Prelude)" preludeSrc
-  predefs <- checkProg preludeSrc (M.empty, emptyQITInfo) prelude
+  predefs <- checkProg preludeSrc M.empty emptyQITInfo prelude
   defsR <- newIORef predefs
 
   let elab = do
         (t, file) <- getRaw
-        (defs, qiti) <- readIORef defsR
-        infer ((emptyCxt (initialPos file)){defs = defs, qitInfo = qiti}) t
-          `catch` \e -> displayError file e >> throwIO e
+        withGlobal' defsR $ do
+          infer (emptyCxt (initialPos file)) t
+            `catch` \e -> displayError file e >> throwIO e
 
   getOpt >>= \case
     ["--help"] -> putStrLn helpMsg
     ["nf"]   -> do
       (t, a) <- elab
-      (defs, qiti) <- readIORef defsR
-      putStrLn $ showTm0 $ nf defs [] t
-      putStrLn "  :"
-      putStrLn $ showTm0 $ quote defs 0 a
+      withGlobal' defsR $ do
+        putStrLn $ showTm0 $ nf [] t
+        putStrLn "  :"
+        putStrLn $ showTm0 $ quote 0 a
     ["type"] -> do
       (t, a) <- elab
-      (defs, qiti) <- readIORef defsR
-      putStrLn $ showTm0 $ quote defs 0 a
+      withGlobal' defsR $ do
+        putStrLn "  :"
+        putStrLn $ showTm0 $ quote 0 a
     ["elab"] -> do
       (t, a) <- elab
-      (defs, qiti) <- readIORef defsR
-      displayMetas defs
-      putStrLn $ showTm0 t
+      withGlobal' defsR $ do
+        displayMetas
+        putStrLn $ showTm0 t
     ["load", fp] -> do 
       src <- readFile fp 
       prog <- parseStringProgram fp src
-      state <- readIORef defsR
-      (defs', qiti') <- checkProg src state prog
+      (defs, qiti) <- readIORef defsR
+      (defs', qiti') <- checkProg src defs qiti prog
       writeIORef defsR (defs', qiti')
       done <- allSolved
       if done then 
         putStrLn $ "Successfully load " ++ fp
       else do
         putStrLn "Unsolved metas."
-        displayMetas defs'
+        withGlobal' defsR $ displayMetas
     ["load"] -> do 
       putStrLn "Expecting a file."
     ["repl"] -> repl' predefs
@@ -144,7 +144,7 @@ repl :: IO ()
 repl = do 
   reset
   prelude <- parseStringProgram "(Prelude)" preludeSrc
-  predefs <- checkProg preludeSrc (M.empty, emptyQITInfo) prelude
+  predefs <- checkProg preludeSrc M.empty emptyQITInfo prelude
   defsR <- newIORef predefs
   repl' predefs
 
@@ -153,15 +153,14 @@ repl' :: (Defs, QITInfo) -> IO ()
 repl' (ori_defs, qiti) = do
   reset
   prelude <- parseStringProgram "(Prelude)" preludeSrc
-  predefs <- checkProg preludeSrc (M.empty, emptyQITInfo) prelude
+  predefs <- checkProg preludeSrc M.empty emptyQITInfo prelude
   defsR <- newIORef predefs
 
   loop defsR where
 
   elab defsR s = do
     t <- parseString s 
-    (defs, qiti') <- readIORef defsR
-    infer ((emptyCxt (initialPos s)){defs = defs, qitInfo = qiti'}) t
+    withGlobal' defsR (infer (emptyCxt (initialPos s)) t)
       `catch` \e -> displayError s e >> throwIO TopLevelError
 
   loop defsR = do   
@@ -182,52 +181,51 @@ repl' (ori_defs, qiti) = do
         loop defsR
       ":t":(unwords -> expr) -> do
         (t, a) <- elab defsR expr
-        (defs, qiti) <- readIORef defsR
-        putStrLn $ showTm0 $ quote defs 0 a
-        loop defsR
+        withGlobal' defsR $ do
+          putStrLn $ showTm0 $ quote 0 a
+          loop defsR
       ":nf":(unwords -> expr)   -> do
         (t, a) <- elab defsR expr
-        (defs, qiti) <- readIORef defsR
-        putStrLn $ showTm0 $ nf defs [] t
-        putStrLn "  :"
-        putStrLn $ showTm0 $ quote defs 0 a
-        loop defsR
+        withGlobal' defsR $ do
+          putStrLn $ showTm0 $ nf [] t
+          putStrLn "  :"
+          putStrLn $ showTm0 $ quote 0 a
+          loop defsR
       [":q"] -> putStrLn "Bye!"
       [":l", fp] -> do
         src <- readFile fp 
         prog <- parseStringProgram fp src
-        state@(defs, qiti) <- readIORef defsR
-        state'@(defs', qiti') <- checkProg src state prog `catch` ((\e -> loop defsR >> exitSuccess) :: Error -> IO (Defs, QITInfo))
+        (defs, qiti) <- readIORef defsR
+        state'@(defs', qiti') <- checkProg src defs qiti prog `catch` ((\e -> loop defsR >> exitSuccess) :: Error -> IO (Defs, QITInfo))
         writeIORef defsR state'
         done <- allSolved
         if done then 
           putStrLn $ "Successfully load " ++ fp
         else do
           putStrLn "Unsolved metas."
-          displayMetas defs'
+          withGlobal' defsR $ displayMetas
         loop defsR
       [":r"] -> do 
         writeIORef defsR (ori_defs, emptyQITInfo)
         loop defsR
       [":metas"] -> do
-        (defs, qiti) <- readIORef defsR
-        displayMetas defs
+        withGlobal' defsR $ do
+          displayMetas
         loop defsR
       [":meta", mid] -> do 
-        state@(defs, qiti) <- readIORef defsR
-        mn <- readIO mid
-        let m = lookupMeta $ MetaVar mn
-        case m of 
-          Unsolved -> putStrLn $ "Meta ?" ++ show mn ++ " is unsolved."
-          Solved v -> putStrLn $ "Meta ?" ++ show mn ++ " = " ++ showTm0 (quote defs 0 v)
-
+        withGlobal' defsR $ do
+          mn <- readIO mid
+          let m = lookupMeta $ MetaVar mn
+          case m of 
+            Unsolved -> putStrLn $ "Meta ?" ++ show mn ++ " is unsolved."
+            Solved v -> putStrLn $ "Meta ?" ++ show mn ++ " = " ++ showTm0 (quote 0 v)
         loop defsR
       [":func", fname] -> do 
         -- print function definition
-        (defs, qiti) <- readIORef defsR
-        case M.lookup fname defs of
-          Just (DefFunc f) -> putStrLn $ showFunc f 
-          _ -> putStrLn $ "Function " ++ fname ++ " not found."
+        withGlobal' defsR $ do
+          case M.lookup fname ?defs of
+            Just (DefFunc f) -> putStrLn $ showFunc f 
+            _ -> putStrLn $ "Function " ++ fname ++ " not found."
         loop defsR
       _ -> do 
         putStrLn "Unknown command."
@@ -265,3 +263,12 @@ splitArgs = space []
 
     word [] s = s
     word w s = reverse w : s
+
+testExamples :: IO ()
+testExamples = do
+  putStrLn "Running tests..."
+  putStrLn ">> Loading Example.shitt..."
+  loadFile "examples/Example.shitt" >> reset
+  loadFile "examples/stlc.shitt" >> reset
+  loadFile "examples/qit_test.shitt" >> reset
+  loadFile "examples/qiit_stlc.shitt" >> reset

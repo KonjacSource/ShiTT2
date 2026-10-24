@@ -1,5 +1,3 @@
-{-# LANGUAGE GADTs #-}
-
 module Debug where 
 import Debug.Trace (trace)
 import Cxt.Type

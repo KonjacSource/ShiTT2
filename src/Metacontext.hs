@@ -48,6 +48,7 @@ reset :: IO ()
 reset = do
   writeIORef nextMeta 0
   writeIORef mcxt mempty
+  writeIORef opnCls M.empty
 
 allSolved :: IO Bool 
 allSolved = do

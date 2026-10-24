@@ -1,4 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
 module Elaboration
   (check, infer, unifyCatch, findType, checkPat, updateCxt, checkCover,
   CoverCheckingError(..), MissingPattern, splitCxt, checkCls, reportOpnCls, checkApdCover) where
@@ -40,46 +39,46 @@ freshMeta cxt = do
   modifyIORef' mcxt $ IM.insert m Unsolved
   pure $ InsertedMeta (MetaVar m) (bds cxt)
 
-unifyCatch :: Cxt -> VTy -> Val -> Val -> IO ()
+unifyCatch :: HasGlobal => Cxt -> VTy -> Val -> Val -> IO ()
 unifyCatch cxt a t t' =
   U.unifyCxt cxt a t t'
   `catch` \UnifyError ->
     throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
 
 -- | Insert fresh implicit applications.
-insert' :: Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
+insert' :: HasGlobal => Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
 insert' cxt act = go =<< act where
-  go (t, va) = case force (defs cxt) va of
+  go (t, va) = case force va of
     VPi x Impl a b -> do
       m <- freshMeta cxt
       let mv = evalCxt cxt m
-      go (App t m Impl, (defs cxt, b) $$ mv)
+      go (App t m Impl, b $$ mv)
     va -> pure (t, va)
 
 -- | Insert fresh implicit applications to a term which is not
 --   an implicit lambda (i.e. neutral).
-insert :: Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
+insert :: HasGlobal => Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
 insert cxt act = act >>= \case
   (t@(Lam _ Impl _), va) -> pure (t, va)
   (t               , va) -> insert' cxt (pure (t, va))
 
 -- | Insert fresh implicit applications until we hit a Pi with
 --   a particular binder name.
-insertUntilName :: Cxt -> Name -> IO (Tm, VTy) -> IO (Tm, VTy)
+insertUntilName :: HasGlobal => Cxt -> Name -> IO (Tm, VTy) -> IO (Tm, VTy)
 insertUntilName cxt name act = go =<< act where
-  go (t, va) = case force (defs cxt) va of
+  go (t, va) = case force va of
     va@(VPi x Impl a b) -> do
       if x == name then
         pure (t, va)
       else do
         m <- freshMeta cxt
         let mv = evalCxt cxt m
-        go (App t m Impl, (defs cxt, b) $$ mv)
+        go (App t m Impl, b $$ mv)
     _ ->
       throwIO $ Error cxt $ NoNamedImplicitArg name
 
-check :: Cxt -> R.Tm -> VTy -> IO Tm
-check cxt t a = case (t, force (defs cxt) a) of
+check :: HasGlobal => Cxt -> R.Tm -> VTy -> IO Tm
+check cxt t a = case (t, force a) of
 
   (R.PrintCxt t, a) -> do
     putStrLn (showCxt cxt)
@@ -94,11 +93,11 @@ check cxt t a = case (t, force (defs cxt) a) of
 
   -- If the icitness of the lambda matches the Pi type, check as usual
   (R.Lam x i t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') i -> do
-    Lam x i' <$> check (bind cxt x a) t ((defs cxt, b) $$ VVar (lvl cxt))
+    Lam x i' <$> check (bind cxt x a) t (b $$ VVar (lvl cxt))
 
   -- Otherwise if Pi is implicit, insert a new implicit lambda
   (t, VPi x Impl a b) -> do
-    Lam x Impl <$> check (newBinder cxt x a) t ((defs cxt, b) $$ VVar (lvl cxt))
+    Lam x Impl <$> check (newBinder cxt x a) t (b $$ VVar (lvl cxt))
 
   -- See https://github.com/KonjacSource/ShiTT2/issues/1
   -- (t, a@(VData d sp)) | Just (c, sp) <- (trace ("| checking data: " ++ dataName d) $ isCons t) -> do 
@@ -132,7 +131,7 @@ check cxt t a = case (t, force (defs cxt) a) of
     unifyCatch cxt VU expected inferred
     pure t
 
-infer :: Cxt -> R.Tm -> IO (Tm, VTy)
+infer :: HasGlobal => Cxt -> R.Tm -> IO (Tm, VTy)
 infer cxt = \case
 
   R.PrintCxt t -> do
@@ -147,11 +146,11 @@ infer cxt = \case
     let go ix (types :> (x', origin, a))
           | x == x' && origin == Source = pure (Var ix, a)
           | otherwise                   = go (ix + 1) types
-        go ix [] = case M.lookup x (defs cxt) of
-          Just (DefFunc c) -> pure (Call x, eval (defs cxt) (env cxt) (funcType c))
-          Just (DefCons c) -> pure (Call x, eval (defs cxt) (env cxt) (consType c))
-          Just (DefData c) -> pure (Call x, eval (defs cxt) (env cxt) (dataType c))
-          Just (DefEq c)   -> pure (Call x, eval (defs cxt) (env cxt) (eqTypeDef c))
+        go ix [] = case M.lookup x ?defs of
+          Just (DefFunc c) -> pure (Call x, eval (env cxt) (funcType c))
+          Just (DefCons c) -> pure (Call x, eval (env cxt) (consType c))
+          Just (DefData c) -> pure (Call x, eval (env cxt) (dataType c))
+          Just (DefEq c)   -> pure (Call x, eval (env cxt) (eqTypeDef c))
           Nothing -> throwIO $ Error cxt $ NameNotInScope x
     go 0 (types cxt)
 
@@ -179,7 +178,7 @@ infer cxt = \case
         pure (Expl, t, tty)
 
     -- ensure that tty is Pi
-    (a, b) <- case force (defs cxt) tty of
+    (a, b) <- case force tty of
       VPi x i' a b -> do
         unless (i == i') $
           throwIO $ Error cxt $ IcitMismatch i i'
@@ -191,7 +190,7 @@ infer cxt = \case
         pure (a, b)
 
     u <- check cxt u a
-    pure (App t u i, (defs cxt, b) $$ evalCxt cxt u)
+    pure (App t u i, b $$ evalCxt cxt u)
 
   R.U ->
     pure (U, VU)
@@ -333,15 +332,15 @@ data UnifRes
 -- Here ctx is the current context, u and v are the two values we are trying to unify,
 -- t is their type, and ctx' is the context after unification.
 -- We need to update the portion of the context that comes after the unified variable.
-unify :: Cxt -> Val -> Val -> VTy -> IO UnifRes
+unify :: HasGlobal => Cxt -> Val -> Val -> VTy -> IO UnifRes
 unify ctx u v t = do
   -- putStrLn $ "Unifying: " ++ showVal ctx u ++ " and " ++ showVal ctx v ++ " at type " ++ showVal ctx t
-  case (force' ctx u, force' ctx v, force' ctx t) of
+  case (force u, force v, force t) of
     (VVar x, v, _)
-      | x `notElem` fv (defs ctx) (lvl ctx) v ->
+      | x `notElem` fv (lvl ctx) v ->
           pure . UnifOk $ updateCxt ctx x v
     (v, VVar x, _)
-      | x `notElem` fv (defs ctx) (lvl ctx) v ->
+      | x `notElem` fv (lvl ctx) v ->
           pure . UnifOk $ updateCxt ctx x v
     (VCons c us, VCons c' vs, VData d ts) -- QIT constructors have no injectivity
       | consName c == consName c' && not (isQIT d) ->
@@ -354,34 +353,33 @@ unify ctx u v t = do
           unifySp ctx us vs $ evalCxt ctx (dataType d)
       | otherwise -> pure UnifFail
     (u, v, _) ->
-      (U.unify (defs ctx) (env ctx) (lvl ctx) u v >> pure (UnifOk ctx))
+      (U.unify (env ctx) (lvl ctx) u v >> pure (UnifOk ctx))
       `catch` \ UnifyError ->
           pure UnifStuck
 
-unifySp :: HasCallStack => Cxt -> Spine -> Spine -> VTy -> IO UnifRes
+unifySp :: HasGlobal => Cxt -> Spine -> Spine -> VTy -> IO UnifRes
 unifySp ctx us vs ts = go ctx (reverse us) (reverse vs) ts where
   go ctx []                         []                          _ = pure $ UnifOk ctx
-  go ctx ((force' ctx -> u, i1):us) ((force' ctx -> v, i2):vs) (VPi x i3 t b) 
+  go ctx ((force -> u, i1):us) ((force -> v, i2):vs) (VPi x i3 t b) 
     | i1 == i2 = do
       uni_res <- unify ctx (updateVal ctx u) (updateVal ctx v) t
       case uni_res of
-        UnifOk ctx' -> go ctx' us vs ((defs ctx, b) $$ updateVal ctx' u)
+        UnifOk ctx' -> go ctx' us vs (b $$ updateVal ctx' u)
         e -> pure e
   go ctx _ _ _ = throwIO $ DefError ctx PatArgMismatch
 
 
-freshVal :: Defs -> [Val] -> [Val] -> Val -> Val
-freshVal def from to = eval def to . quote def (Lvl (length from))
+freshVal :: HasGlobal =>  [Val] -> [Val] -> Val -> Val
+freshVal from to = eval to . quote (Lvl (length from))
 
 -- Note. This is a very bad function, it refresh the hole context.
 -- But I can't figure out a better way now.
 -- The Context in this project is not very well formed for most cases.
 -- For example, we may have a context: `cxt, x : A, cxt'` where `A` may refer to variables in `cxt'`.
-updateCxt :: Cxt -> Lvl -> Val -> Cxt
+updateCxt :: HasGlobal => Cxt -> Lvl -> Val -> Cxt
 updateCxt ctx x v = if length env' /= length bds' then error "!!!" else ctx {env = env', types = typ', bds = bds'} where
   env1 = env ctx
   typ = types ctx
-  def = defs ctx
   x' = unIx $ lvl2Ix (lvl ctx) x
   (postenv, xval_old:prenv) = splitAt x' env1
 
@@ -399,7 +397,7 @@ updateCxt ctx x v = if length env' /= length bds' then error "!!!" else ctx {env
   refresh (v:es) ((x,ori,t):tys) =
     let (es', tys') = refresh es tys
         env'' = changeTail env2 es'
-    in (freshVal def env1 env'' v:es', (x, ori, freshVal def env1 env'' t):tys')
+    in (freshVal env1 env'' v:es', (x, ori, freshVal env1 env'' t):tys')
   refresh _ _ = error "refresh: impossible"
 
   (env', typ') = refresh env1 typ
@@ -411,12 +409,12 @@ updateCxt ctx x v = if length env' /= length bds' then error "!!!" else ctx {env
 
   bds' = genBDs [ (Ix x, v) | (x, v) <- zip [0 .. length env' - 1] env' ]
 
-checkCls :: HasCallStack => Cxt -> Id -> Ty -> R.RClause -> IO Clause
+checkCls :: HasGlobal => Cxt -> Id -> Ty -> R.RClause -> IO Clause
 checkCls ctx func_name func_typ (R.RClause rps rhs) = do
   let func_typ' = evalCxt ctx func_typ
   (ps, ctx', rhs_ty) <- checkPat False ctx rps func_typ'
   rhs' <- check ctx' rhs rhs_ty
-  let rhs'' = nf (defs ctx') (env ctx') rhs'
+  let rhs'' = nf (env ctx') rhs'
   -- NOTE. The @nf@ here should remove all the metas.
   if noMetas rhs'' then
     pure $ Clause ps rhs''
@@ -427,9 +425,9 @@ checkCls ctx func_name func_typ (R.RClause rps rhs) = do
 -- isCons = True, if we are elaborating the patterns of a constructor.
 -- Throws `Error`, throw `DefError _ $ WrongPattern _ _` for absurd patterns, `DefError _ $ UnsurePattern _ _` for IDK patterns.
 -- TODO : Change the return type to `IO ([(Pattern, Icit)], Spine, Cxt, VTy)`
-checkPat :: Bool -> Cxt -> R.RPatterns -> VTy -> IO ([(Pattern, Icit)], Cxt, VTy)
+checkPat :: HasGlobal => Bool -> Cxt -> R.RPatterns -> VTy -> IO ([(Pattern, Icit)], Cxt, VTy)
 checkPat isCons ctx [] ty
-  | isCons = case force' ctx ty of
+  | isCons = case force ty of
     -- If we are elaborating constructor patterns, we need to make sure all implicit patterns are filled.
     -- i.e.
     -- data Id : U -> U -> U where 
@@ -440,13 +438,13 @@ checkPat isCons ctx [] ty
     -- symm (refl {u}) = refl 
       VPi x Impl a b -> do
         let ctx' = bind ctx ('_':x) a
-        let b' = (defs ctx', b) $$ VVar (lvl ctx)
+        let b' = b $$ VVar (lvl ctx)
         (rps, rctx, rty) <- checkPat isCons ctx' [] b'
         pure ((PatVar ('_':x), Impl): rps, rctx, rty)
       _ -> pure ([], ctx, ty)
   | otherwise = pure ([], ctx, ty)
-checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (force' ctx -> a) b) | i == i' =
-  case M.lookup c (defs ctx) of
+checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VPi x' i' (force -> a) b) | i == i' =
+  case M.lookup c ?defs of
     Just (DefCons _) ->
       case a of
         VData d d_arg -> do
@@ -475,17 +473,17 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (for
           -- So we have to refresh the Cxt.
           -- Note. Here p2v start from the level of ctx, not ctx''.
           let p = PatCon c ps'
-          let patVal = p2v (defs ctx'', qitInfo ctx'') (lvl ctx) p
+          let patVal = p2v (lvl ctx) p
           let patVal' = evalCxt ctx'' (quoteCxt ctx'' patVal)
-          let b_rest = (defs ctx'', b) $$ patVal'
+          let b_rest = b $$ patVal'
           let b_rest_updated = evalCxt ctx'' (quoteCxt ctx'' b_rest)
           (rps, rctx, rty) <- checkPat isCons ctx'' ps b_rest_updated
           pure ((p, i) : rps, rctx, rty)
         _ -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx a)
-    (Just (DefEq _)) | isQITCon c (qitInfo ctx) -> case M.lookup c (extraEq (qitInfo ctx)) of
+    (Just (DefEq _)) | isQITCon c -> case M.lookup c (extraEq ?qitInfo) of
         Nothing -> error "checkPat: impossible"
-        Just conEq -> case force' ctx a of
-          VPrim Oeq eq_arg@(reverse -> [(force' ctx -> VData d d_arg, Impl), (lhs, Expl), (rhs, Expl)]) | isQIT d -> do
+        Just conEq -> case force a of
+          VPrim Oeq eq_arg@(reverse -> [(force -> VData d d_arg, Impl), (lhs, Expl), (rhs, Expl)]) | isQIT d -> do
             -- TODO: refactor, merge with the above code.
             let c_tele = eqTel conEq
             let c_ix = eqIx conEq
@@ -513,9 +511,9 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (for
               UnifFail  -> throwIO $ DefError ctx $ WrongPattern  c (quoteCxt ctx a)
 
             let p = PatCon c ps'
-            let patVal = p2v (defs ctx'', qitInfo ctx'') (lvl ctx) p
+            let patVal = p2v (lvl ctx) p
             let patVal' = evalCxt ctx'' (quoteCxt ctx'' patVal)
-            let b_rest = (defs ctx'', b) $$ patVal'
+            let b_rest = b $$ patVal'
             let b_rest_updated = evalCxt ctx'' (quoteCxt ctx'' b_rest)
             (rps, rctx, rty) <- checkPat isCons ctx'' ps b_rest_updated
             pure ((p, i) : rps, rctx, rty)
@@ -524,20 +522,20 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force' ctx -> VPi x' i' (for
     _ | null c_arg -> do -- Var pattern.
           let x = c
           let ctx' = bind ctx x a
-          let b' = (defs ctx, b) $$ VVar (lvl ctx)
+          let b' = b $$ VVar (lvl ctx)
           (ps', rest, rhs) <- checkPat isCons ctx' ps b'
           pure ((PatVar x, i):ps', rest, rhs)
       | otherwise     -> throwIO $ DefError ctx $ NameIsNotCons c Nothing
-checkPat isCons ctx ps@((Left x, p):ps') (force' ctx -> VPi x' i' (force' ctx -> a) b)
+checkPat isCons ctx ps@((Left x, p):ps') (force -> VPi x' i' (force -> a) b)
   | i' == Impl && x == x' = checkPat isCons ctx ((Right Impl, p):ps') (VPi x' Impl a b) -- Jump to the former clause
   | otherwise             = do
       let ctx' = bind ctx ('_':x') a
-      let b' = (defs ctx, b) $$ VVar (lvl ctx)
+      let b' = b $$ VVar (lvl ctx)
       (rps, rctx, rty) <- checkPat isCons ctx' ps b'
       pure ((PatVar ('_':x'), Impl): rps, rctx, rty)
-checkPat isCons ctx ps@((Right Expl, _):ps') (force' ctx -> VPi x' Impl (force' ctx -> a) b) = do
+checkPat isCons ctx ps@((Right Expl, _):ps') (force -> VPi x' Impl (force -> a) b) = do
     let ctx' = bind ctx ('_':x') a
-    let b' = (defs ctx, b) $$ VVar (lvl ctx)
+    let b' = b $$ VVar (lvl ctx)
     (rps, rctx, rty) <- checkPat isCons ctx' ps b'
     pure ((PatVar ('_':x'), Impl): rps, rctx, rty)
 checkPat isCons ctx ps t = throwIO $ DefError ctx $ PatArgMismatch
@@ -551,18 +549,18 @@ patApp (PatVar x) p = error "patApp: impossible"
 -- returns (cxt', p', patVal, rhs_ty)
 -- `cxt' |- f ps = fv ps = p' = patVal : rhs_ty`
 -- TODO: modify checkPat function (more information is needed), so I don't need this function anymore.
-applyPat :: Cxt -> (Pattern, Val) -> PatternTele Empty -> VTy -> IO (Cxt, Pattern, Val, VTy)
+applyPat :: HasGlobal => Cxt -> (Pattern, Val) -> PatternTele Empty -> VTy -> IO (Cxt, Pattern, Val, VTy)
 applyPat cxt (f, fv) [] ty = pure (cxt, f, fv, ty)
-applyPat cxt (f, fv) ((p, i):ps) ty = case force' cxt ty of
-  VPi x i' a b | i == i' -> case (p, force' cxt a) of
+applyPat cxt (f, fv) ((p, i):ps) ty = case force ty of
+  VPi x i' a b | i == i' -> case (p, force a) of
     (PatVar x', a') -> do
       let cxt' = bind cxt x' a'
-      let b' = (defs cxt, b) $$ VVar (lvl cxt)
+      let b' = b $$ VVar (lvl cxt)
       let f' = patApp f (p, i)
-      let fv' = vApp (defs cxt') fv (VVar (lvl cxt)) i
+      let fv' = vApp fv (VVar (lvl cxt)) i
       applyPat cxt' (f', fv') ps b'
     (PatCon c c_arg, VData d d_arg) -> do
-      (c_def, c_tele, c_ix) <- case (M.lookup c (defs cxt), lookupCons d c) of
+      (c_def, c_tele, c_ix) <- case (M.lookup c ?defs, lookupCons d c) of
           (Just (DefCons c_def), Just (r1, r2)) -> pure (c_def, r1, r2)
           _ -> error "applyPat: impossible"
       let c_ty = evalCxt cxt $ getConsType d c_tele c_ix
@@ -577,9 +575,9 @@ applyPat cxt (f, fv) ((p, i):ps) ty = case force' cxt ty of
         _ -> error "applyPat: impossible"
       let fv_u = evalCxt cxt'' (quoteCxt cxt'' fv)
       let cv_upd = evalCxt cxt'' (quoteCxt cxt'' cv)
-      let b_rest = (defs cxt'', b) $$ cv_upd
+      let b_rest = b $$ cv_upd
       let b_rest_upd = evalCxt cxt'' (quoteCxt cxt'' b_rest)
-      let fv_upd_c = vApp (defs cxt'') fv_u cv_upd i
+      let fv_upd_c = vApp fv_u cv_upd i
       applyPat cxt'' (patApp f (cp, i), fv_upd_c) ps b_rest_upd
     _ -> error "applyPat: impossible"
   _ -> error "applyPat: impossible"
@@ -601,7 +599,7 @@ data CoverRes
   | CoverStuck Lvl (PatternTele ()) -- Which variable is stucking, and where is it
   | CoverFail [(Cxt, Spine)] -- Meet a dead end
 
-checkCover :: Bool -> Cxt -> FuncDef -> VTy -> Int -> [ClauseLHS] -> Either CoverCheckingError ()
+checkCover :: HasGlobal => Bool -> Cxt -> FuncDef -> VTy -> Int -> [ClauseLHS] -> Either CoverCheckingError ()
 checkCover genApdC ctx fn fty arity clss = case testManySpine genApdC fn clss [initSp] of
     Nothing -> Left MeetIDKCons
     Just [] -> Right ()
@@ -609,8 +607,8 @@ checkCover genApdC ctx fn fty arity clss = case testManySpine genApdC fn clss [i
   where
     genInitSpine :: Cxt -> VTy -> Int -> (Cxt, Spine)
     genInitSpine cxt ty 0 = (cxt, [])
-    genInitSpine cxt (force' cxt -> VPi x i a b) arity =
-      let (cxt', sp) = genInitSpine (bind cxt ("_cov_chk_"++x) a) ((defs cxt, b) $$ VVar (lvl cxt)) (arity - 1)
+    genInitSpine cxt (force -> VPi x i a b) arity =
+      let (cxt', sp) = genInitSpine (bind cxt ("_cov_chk_"++x) a) (b $$ VVar (lvl cxt)) (arity - 1)
       in (cxt', sp ++ [(VVar (lvl cxt), i)]) -- TODO: Spine is reversed, change to normal list one day. 
     genInitSpine _ _ _ = error "genInitSpine: impossible"
     initSp = genInitSpine ctx fty arity
@@ -620,8 +618,8 @@ checkCover genApdC ctx fn fty arity clss = case testManySpine genApdC fn clss [i
 -- For example,  
 -- if `ctx |- x : Nat`, then `splitCxt ctx x = Just [ctx [x |-> zero], ctx [x |-> suc (VVar y)]]` where `y : Nat` is a fresh variable. 
 -- Return `Nothing`, if there is one or more IDK constructors. 
-splitCxt :: Cxt -> Lvl -> Maybe [Cxt]
-splitCxt cxt x = case force' cxt (findType cxt x) of
+splitCxt :: HasGlobal => Cxt -> Lvl -> Maybe [Cxt]
+splitCxt cxt x = case force (findType cxt x) of
   x_ty@(VData d d_arg) -> might $ do
     fmap join $ forM (dataCons d) $ \c@(c_name, c_tele, _) -> do
           -- split x to constructor c
@@ -636,15 +634,15 @@ splitCxt cxt x = case force' cxt (findType cxt x) of
           case cp of
             Nothing -> pure []
             Just ([(p', _)], cxt', _) -> do
-              let pv = p2v (defs cxt, qitInfo cxt) (lvl cxt) p'
+              let pv = p2v (lvl cxt) p'
               let cxt'' = updateCxt cxt' x pv
               pure [cxt'']
             _ -> error "splitCxt: impossible"
   
   x_ty@(VPrim Oeq sp@([]:>(a, _):>(lhs, _):>(rhs, _)))
-    | VData d d_arg <- force' cxt a 
+    | VData d d_arg <- force a 
     -> might $ do 
-      let cons = fromJust $ M.lookup (dataName d) (extraEq' (qitInfo cxt))
+      let cons = fromJust $ M.lookup (dataName d) (extraEq' ?qitInfo)
       fmap join $ forM cons $ \c -> do
         let c_name = eqName c
         let c_tele = eqTel c
@@ -660,7 +658,7 @@ splitCxt cxt x = case force' cxt (findType cxt x) of
         case cp of
           Nothing -> pure []
           Just ([(p', _)], cxt', _) -> do
-            let pv = p2v (defs cxt, qitInfo cxt) (lvl cxt) p'
+            let pv = p2v (lvl cxt) p'
             let cxt'' = updateCxt cxt' x pv
             pure [cxt'']
           _ -> error "splitCxt: impossible"
@@ -676,11 +674,11 @@ splitCxt cxt x = case force' cxt (findType cxt x) of
 -- If the spine can be matched by the patterns, return ()
 -- If stucked, split the stucked variable of the spine.
 -- If fails, move to next clause lhs.
-testSpine :: Defs -> [ClauseLHS] -> Cxt -> Spine -> CoverRes
-testSpine defs clss cxt sp = go clss where -- cxt |- sp 
+testSpine :: HasGlobal => [ClauseLHS] -> Cxt -> Spine -> CoverRes
+testSpine clss cxt sp = go clss where -- cxt |- sp 
   go = \case
     [] -> CoverFail [(cxt, sp)]
-    (ps:rest) -> case match defs (env cxt) ps sp of
+    (ps:rest) -> case match (env cxt) ps sp of
       MatchSuc _ -> CoverOk
       MatchFailed -> go rest -- move to next clause
       MatchStuck (BVar x ps) -> CoverStuck x ps
@@ -689,13 +687,13 @@ testSpine defs clss cxt sp = go clss where -- cxt |- sp
 -- Get the spine with splitting the stucked variable
 -- Return `Nothing`, if there is one or more IDK constructors.
 -- Return `Just (_, True)`, if the splitting variable is a QIT element 
-genSpine :: Cxt -> Spine -> Lvl -> Maybe ([(Cxt, Spine)], Bool)
+genSpine :: HasGlobal => Cxt -> Spine -> Lvl -> Maybe ([(Cxt, Spine)], Bool)
 genSpine cxt sp x = do
     fst <- genSpine' cxt sp x
-    case force' cxt (findType cxt x) of
+    case force (findType cxt x) of
       VData d d_arg ->
         pure (fst, isQIT d)
-      VPrim Oeq ([]:>(force' cxt -> VData d d_arg, _):>(lhs, _):>(rhs, _)) -> 
+      VPrim Oeq ([]:>(force -> VData d d_arg, _):>(lhs, _):>(rhs, _)) -> 
         pure (fst, False)
       ty -> error $ "impossible" ++ show ty
   where
@@ -707,10 +705,10 @@ genSpine cxt sp x = do
         let sp' = updateSp cxt' sp
         pure (cxt', sp')
 
-testManySpine :: Bool -> FuncDef -> [ClauseLHS] -> [(Cxt, Spine)] -> Maybe [(Cxt, Spine)]
+testManySpine :: HasGlobal => Bool -> FuncDef -> [ClauseLHS] -> [(Cxt, Spine)] -> Maybe [(Cxt, Spine)]
 testManySpine genApdC f clss = \case -- f will not be used, if genApdC=False
   [] -> Just []
-  (cxt, sp):rest -> case testSpine (defs cxt) clss cxt sp of
+  (cxt, sp):rest -> case testSpine clss cxt sp of
     CoverOk -> testManySpine genApdC f clss rest
     CoverStuck l blk_pos -> do
       (gen, isqit) <- genSpine cxt sp l
@@ -726,7 +724,7 @@ testManySpine genApdC f clss = \case -- f will not be used, if genApdC=False
       right <- testManySpine genApdC f clss rest
       pure $ sp' ++ right
 
-generateApdClauses' :: Cxt -> FuncDef -> PatternTele () -> IO ()
+generateApdClauses' :: HasGlobal => Cxt -> FuncDef -> PatternTele () -> IO ()
 generateApdClauses' cxt f ps = do
   -- putStrLn $ "Generating apd clauses for function: " ++ funcName f ++ " with patterns: " ++ show ps
   apd_cls <- generateApdClauses cxt f ps
@@ -742,13 +740,13 @@ generateApdClauses' cxt f ps = do
 -- It seems we must consider `apd` as `apd-f-ps` defined for each function `f` and pattern `ps`.
 -- So the type is also dependent on `f` and `ps`, thus we don't need `A` and `B` as parameters.
 -- apd (fps : (x : A) → B x) {x y : A} (h : x =_A y) : cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (fps x) =_{B y} fps y
-generateApdClauses :: Cxt -> FuncDef -> PatternTele () -> IO ApdCls
+generateApdClauses :: HasGlobal => Cxt -> FuncDef -> PatternTele () -> IO ApdCls
 generateApdClauses cxt f ps' = do
   (cxt', fps, fpsv, fpsty) <- applyPat cxt (PatFunc (funcName f) [], VFunc f []) ps (evalCxt cxt $ funcType f)
   -- putStrLn $ "applyPat used: fpsv= " ++ showVal cxt' fpsv ++ "; fpsty= " ++ showVal cxt' fpsty
-  case force' cxt' fpsty of
+  case force fpsty of
     VPi x Expl a b -> -- a must be a QIT type 
-      case force' cxt' a of
+      case force a of
         VData d d_arg | isQIT d -> do
           let x_pat = PatVar "_x"
           let x_val = VVar (lvl cxt')
@@ -759,7 +757,7 @@ generateApdClauses cxt f ps' = do
           let pats = [(fps, Expl), (x_pat, Impl), (y_pat, Impl), (h_pat, Expl)]
           let vals = [(fpsv, Expl), (x_val, Impl), (y_val, Impl), (h_val, Expl)]
           let cxt'xy = bind (bind cxt' "_x" a) "_y" a
-          let h_ty = vAppSp (defs cxt'xy) (VPrim Oeq []) $ [] :> (a, Impl) :> (x_val, Expl) :> (y_val, Expl)
+          let h_ty = vAppSp (VPrim Oeq []) $ [] :> (a, Impl) :> (x_val, Expl) :> (y_val, Expl)
           let cxt'xyh = bind cxt'xy "_h" h_ty
           -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} (λ z → B z) h) (fps x) =_{B y} fps y
           pure $ ApdCls
@@ -775,7 +773,7 @@ generateApdClauses cxt f ps' = do
       go acc ((p, i) : ps) = go (acc ++ [(fromJust $ noMark p, i)]) ps
   -- [(Cxt, PatternTele Empty, Spine)]
 
-reportOpnCls :: IO ()
+reportOpnCls :: HasGlobal => IO ()
 reportOpnCls = do
   cls <- readIORef opnCls
   putStrLn "Opening congruences: "
@@ -784,14 +782,14 @@ reportOpnCls = do
       putStrLn $ "  apd " ++ showSp (apdCxt ap) (apdSpn ap)
 
 -- TODO: Cxt and Defs/QITInfo should be seperated
-checkApdCover :: (Defs, QITInfo) -> Name -> IO (Either CoverCheckingError ())
-checkApdCover (defs, qitInfo) fnName = do
+checkApdCover :: HasGlobal => Name -> IO (Either CoverCheckingError ())
+checkApdCover fnName = do
   cls <- readIORef opnCls
   case M.lookup fnName cls of
     Nothing -> error "impossible"
     Just opns -> do
-      let cxtsp = (\ApdCls{..} -> (apdCxt{defs = defs, qitInfo = qitInfo}, reverse apdSpn)) <$> opns
-      lhss <- case M.lookup fnName (definedApd qitInfo) of
+      let cxtsp = (\ApdCls{..} -> (apdCxt, reverse apdSpn)) <$> opns
+      lhss <- case M.lookup fnName (definedApd ?qitInfo) of
             Nothing -> do
               putStrLn $ "Error: There is no apd clause definition for funtion " ++ fnName -- make it better
               pure []

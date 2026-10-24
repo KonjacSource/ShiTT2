@@ -11,7 +11,7 @@ import Common
 import Evaluation
 import Metacontext
 import Syntax
-import Cxt.Type (Defs, Cxt (Cxt))
+import Cxt.Type
 import GHC.Stack (HasCallStack)
 import Definition
 import qualified Data.Map as M
@@ -89,16 +89,16 @@ prettyTm prec = go prec where
 showTm0 :: Tm -> String
 showTm0 t = prettyTm 0 [] t []
 
-displayMetas :: Defs -> IO ()
-displayMetas defs = do
+displayMetas :: HasGlobal => IO ()
+displayMetas = do
   ms <- readIORef mcxt
   forM_ (IM.toList ms) $ \(m, e) -> case e of
     Unsolved -> printf "let ?%s = ?;\n" (show m)
-    Solved v -> printf "let ?%s = %s;\n" (show m) (showTm0 $ quote defs 0 v)
+    Solved v -> printf "let ?%s = %s;\n" (show m) (showTm0 $ quote 0 v)
   putStrLn ""
 
-showDefs :: Defs -> String 
-showDefs defs = unlines $ map showDef (M.toList defs) where
+showDefs :: HasGlobal => String 
+showDefs = unlines $ map showDef (M.toList ?defs) where
   showDef (fname, def) = case def of
     DefFunc f -> "def " ++ funcName f
     DefData d -> "data " ++ dataName d

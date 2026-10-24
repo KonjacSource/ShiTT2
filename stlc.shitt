@@ -63,13 +63,3 @@ data Progress : {A : Ty} -> Tm empty A -> U where
 | prStep : {A : Ty} (t T : Tm empty A) -> step1 t T -> Progress t
 | prDone : {A : Ty} (t : Tm empty A) -> Val t -> Progress t 
 
--- Progress 
-def progress : {A : Ty} (t : Tm empty A) -> Progress t
-| tt = prDone tt vtt
-| (lam t) = prDone (lam t) (vlam t)
-| (var x) = absurd x
-| (app t1 t2) =
-    match progress t1 with 
-    | (prStep t1 T1 st1) = prStep _ _ (stApp1 t1 T1 t2 st1)
-    | (prDone t1 (vlam t)) = prStep _ _ (stApp t t2)
-    end

@@ -39,8 +39,6 @@ library
       Presyntax
       Pretty
       Syntax
-      Test.Coverage
-      Test.PatternMatching
       Unification
       Value
   other-modules:
@@ -50,6 +48,7 @@ library
   hs-source-dirs:
       src
   default-extensions:
+      Strict
       DerivingVia
       DeriveAnyClass
       FlexibleContexts
@@ -58,10 +57,15 @@ library
       OverloadedStrings
       PatternSynonyms
       StandaloneDeriving
-      Strict
       TupleSections
       ViewPatterns
       GADTs
+      ImplicitParams
+      ConstraintKinds
+      EmptyCase
+      RecordWildCards
+      DeriveFunctor
+      RankNTypes
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-matches -Wno-name-shadowing -Wno-missing-signatures -Wno-missing-export-lists -Wno-unused-imports -Wno-unused-local-binds -Wno-incomplete-uni-patterns -Wno-unused-do-bind -Wno-orphans
   build-depends:
       base >=4.7 && <5
@@ -78,6 +82,7 @@ executable OhTT-exe
   hs-source-dirs:
       app
   default-extensions:
+      Strict
       DerivingVia
       DeriveAnyClass
       FlexibleContexts
@@ -86,10 +91,15 @@ executable OhTT-exe
       OverloadedStrings
       PatternSynonyms
       StandaloneDeriving
-      Strict
       TupleSections
       ViewPatterns
       GADTs
+      ImplicitParams
+      ConstraintKinds
+      EmptyCase
+      RecordWildCards
+      DeriveFunctor
+      RankNTypes
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-matches -Wno-name-shadowing -Wno-missing-signatures -Wno-missing-export-lists -Wno-unused-imports -Wno-unused-local-binds -Wno-incomplete-uni-patterns -Wno-unused-do-bind -Wno-orphans -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       OhTT
@@ -108,6 +118,7 @@ test-suite OhTT-test
   hs-source-dirs:
       test
   default-extensions:
+      Strict
       DerivingVia
       DeriveAnyClass
       FlexibleContexts
@@ -116,10 +127,15 @@ test-suite OhTT-test
       OverloadedStrings
       PatternSynonyms
       StandaloneDeriving
-      Strict
       TupleSections
       ViewPatterns
       GADTs
+      ImplicitParams
+      ConstraintKinds
+      EmptyCase
+      RecordWildCards
+      DeriveFunctor
+      RankNTypes
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-matches -Wno-name-shadowing -Wno-missing-signatures -Wno-missing-export-lists -Wno-unused-imports -Wno-unused-local-binds -Wno-incomplete-uni-patterns -Wno-unused-do-bind -Wno-orphans -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       OhTT

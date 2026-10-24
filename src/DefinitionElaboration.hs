@@ -1,4 +1,6 @@
 -- TODO: Use state monad. o_O
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Redundant pure" #-}
 
 module DefinitionElaboration where
 
@@ -23,10 +25,10 @@ import Metacontext
 import Debug.Trace (trace)
 import GHC.IO (unsafePerformIO)
 
-checkFunc1 :: Cxt -> RFuncDef -> IO FuncDef
+checkFunc1 :: HasGlobal => Cxt -> RFuncDef -> IO FuncDef
 checkFunc1 ctx (RFuncDef func_name func_typ cls) = do
   func_typ' <- E.check ctx func_typ VU
-  let func_typ'' = nf (defs ctx) (env ctx) func_typ'
+  let func_typ'' = nf (env ctx) func_typ'
   unless (noMetas func_typ'') $ do
     throwIO $ DefError ctx $ UnsolvedMetaInFuncDef func_name
   let go = \case
@@ -41,11 +43,11 @@ checkFunc1 ctx (RFuncDef func_name func_typ cls) = do
 insertFunc :: Defs -> FuncDef -> Defs
 insertFunc defs func = M.insert (funcName func) (DefFunc func) defs
 
-checkFunc ::  Cxt -> RFuncDef -> IO FuncDef
+checkFunc ::  HasGlobal => Cxt -> RFuncDef -> IO FuncDef
 checkFunc ctx rfun = do
   m <- readIORef nextMeta
   prefun <- checkFunc1 ctx (rfun {funcClausesR = []}) -- this allowing recursion.
-  fun <- checkFunc1 (ctx {defs = M.insert (funcNameR rfun) (DefFunc prefun) (defs ctx)}) rfun
+  fun <- withDefs (M.insert (funcNameR rfun) (DefFunc prefun) ?defs) $ checkFunc1 ctx rfun
   -- TODO : Check Coverage.
   -- putStrLn $ showFunc fun
   pure fun
@@ -61,49 +63,49 @@ insertData :: Defs -> DataDef -> Defs
 insertData defs dat = M.insert (dataName dat) (DefData dat) defs
 
 checkData :: SourcePos -> Defs -> QITInfo -> RDataDef -> IO (Defs, QITInfo)
-checkData s defs qiti rdat = do
-    ix_ty <- E.check (emptyCxt s){defs = defs} (dataIxR rdat) VU >>= checkIx . nf defs []
+checkData s defs qiti rdat = withGlobal defs qiti $ do
+    ix_ty <- withGlobal defs qiti (E.check (emptyCxt s) (dataIxR rdat) VU) >>= checkIx . nf []
     -- (snd -> ix_ty) <- checkTelescope  ()
     let dat_head = DataDef (dataNameR rdat) ix_ty [] (isQITR rdat)
     let defs' = insertData defs dat_head
     -- (res_defs, res_qiti) <- checkConss s (defs', qiti) dat_head (dataConsR rdat)
-    checkConss s (defs', qiti) dat_head (dataConsR rdat)
+    checkConss s defs' qiti dat_head (dataConsR rdat)
   where
     checkIx :: Tm -> IO Telescope
     checkIx tm = case unfoldPi tm of
       (ix, U) -> pure ix
-      _ -> throwIO $ DefError ((emptyCxt s){defs = defs}) $ DataMustInU (dataNameR rdat)
+      _ -> throwIO $ DefError (emptyCxt s) $ DataMustInU (dataNameR rdat)
 
 -- There might be path constructors in the list
-checkConss :: SourcePos -> (Defs, QITInfo) -> DataDef -> [(Name, R.Tm)] -> IO (Defs, QITInfo)
-checkConss s (defs, qiti) dat = \case 
+checkConss :: SourcePos -> Defs -> QITInfo -> DataDef -> [(Name, R.Tm)] -> IO (Defs, QITInfo)
+checkConss s defs qiti dat = \case
   [] -> pure (defs, qiti)
-  (c, t) : rest -> do
-    t' <- nf defs [] <$> E.check (emptyCxt s){defs = defs} t VU
+  (c, t) : rest -> withGlobal defs qiti $ do
+    t' <- nf [] <$> E.check (emptyCxt s) t VU
     cons <- checkCons s defs dat (c, t')
-    case cons of 
-      Left (c, ts, ix) -> do 
+    case cons of
+      Left (c, ts, ix) -> do
         let dat' = dat {dataCons = dataCons dat ++ [(c, ts, ix)]}
-        checkConss s (insertCons (insertData defs dat') (getConstructors dat'), qiti) dat' rest
-      Right eqcons -> do 
+        checkConss s (insertCons (insertData defs dat') (getConstructors dat')) qiti dat' rest
+      Right eqcons -> do
         let qiti' = insertEqCon eqcons qiti
         let defs' = insertEqCons eqcons defs
-        checkConss s (defs', qiti') dat rest
+        checkConss s defs' qiti' dat rest
 
 checkCons :: SourcePos -> Defs -> DataDef -> (Name, Tm) -> IO (Either (Name, Telescope, TSpine) EqCons)
-checkCons s defs dat (c, ty) = do 
+checkCons s defs dat (c, ty) = do
   case go ty of
-    Nothing -> throwIO $ DefError ((emptyCxt s){defs = defs}) $ ConstructorMustReturnData c
-    Just (ispath, ts, args) 
+    Nothing -> throwIO $ DefError (emptyCxt s) $ ConstructorMustReturnData c
+    Just (ispath, ts, args)
       | not ispath -> pure $ Left(c, ts, args) -- here args is indexes 
-      | ispath && isQIT dat -> do 
+      | ispath && isQIT dat -> do
           let [(a, Impl), (lhs, Expl), (rhs, Expl)] = args -- lhs =_{a} rhs
-          case goApp a of 
+          case goApp a of
             Just (ispath', ix)
               | not ispath' -> pure $ Right $ EqCons dat c ts lhs rhs ix
-              | otherwise -> throwIO $ DefError ((emptyCxt s){defs = defs}) $ HigherDimensionalDataNotSupported (dataName dat) c
-            Nothing -> throwIO $ DefError ((emptyCxt s){defs = defs}) $ ConstructorMustReturnData c
-      | otherwise -> throwIO $ DefError ((emptyCxt s){defs = defs}) $ NonQITCan'tHaveEqCons (dataName dat) c     
+              | otherwise -> throwIO $ DefError (emptyCxt s) $ HigherDimensionalDataNotSupported (dataName dat) c
+            Nothing -> throwIO $ DefError (emptyCxt s) $ ConstructorMustReturnData c
+      | otherwise -> throwIO $ DefError (emptyCxt s) $ NonQITCan'tHaveEqCons (dataName dat) c
   where
     go :: Tm -> Maybe (Bool, Telescope, TSpine)
     go tm = do
@@ -134,116 +136,116 @@ getConstructors dat = map go (dataCons dat) where
   go1 [] c = c
   go1 ((x, i, t):xs) c = Pi x i t $ go1 xs c
 
-checkProg' :: HasCallStack => (Defs, QITInfo) -> Program -> IO (Defs, QITInfo)
-checkProg' state [] = do 
+checkProg' :: HasCallStack => Defs -> QITInfo -> Program -> IO (Defs, QITInfo)
+checkProg' defs qiti [] = do
   -- At the end of a program, we check coverage for every apd clause
-  cls <- readIORef opnCls 
-  forM_ (M.keys cls) $ \fn -> do 
-    res <- E.checkApdCover state fn 
-    case res of 
-      Left E.MeetIDKCons -> error "meet idk case in apd coverage checking"  
-      Left (E.CoverMissPat ps) -> do 
+  cls <- readIORef opnCls
+  forM_ (M.keys cls) $ \fn -> withGlobal defs qiti $ do
+    res <- E.checkApdCover fn
+    case res of
+      Left E.MeetIDKCons -> error "meet idk case in apd coverage checking"
+      Left (E.CoverMissPat ps) -> do
         putStrLn $ "There are unclosing congruences for function " ++ fn
         putStrLn $ "Missing the following " ++ show (length ps) ++ " pattern(s):"
         forM_ ps $ \sp ->
           putStrLn $ " " ++ printSp sp
 
-      Right () -> do 
+      Right () -> do
         removeCls fn
-  pure state 
-        
-checkProg' (defs, qiti) ((sp, d):ds) = case d of
+  pure (defs, qiti)
+
+checkProg' defs qiti ((sp, d):ds) = case d of
   RDefFunc d -> do
-    f <- checkFunc ((emptyCxt sp){defs = defs}) d
+    f <- withGlobal defs qiti $ checkFunc (emptyCxt sp) d
     -- Coverage Check
     let defs' = insertFunc defs f
-    checkFuncCover sp defs' (funcName f)
-    checkProg' (defs', qiti) ds
+    checkFuncCover sp defs' qiti (funcName f)
+    checkProg' defs' qiti ds
   RDefData d -> do
     (defs', qiti') <- checkData sp defs qiti d
     -- putStrLn $ showDefs defs'
-    checkProg' (defs', qiti') ds
-  RDefApd d -> do 
-    (defs', qiti') <- checkApd sp (defs, qiti) d 
-    checkProg' (defs', qiti') ds
+    checkProg' defs' qiti' ds
+  RDefApd d -> do
+    (defs', qiti') <- checkApd sp defs qiti d
+    checkProg' defs' qiti' ds
   RDefMutual mb -> do
     let sigs = mutualSig mb
     let bodys = mutualBody mb
     defs' <- insertMutualSig (defs, qiti) sigs
-    (defs'', qiti'') <- insertMutualBody (defs', qiti) (map snd sigs) bodys
+    (defs'', qiti'') <- insertMutualBody defs' qiti (map snd sigs) bodys
     -- Coverage Check 
     forM_ sigs $ \ (_, h) -> case h of
-      FunHeader name _ -> checkFuncCover sp defs'' name
+      FunHeader name _ -> checkFuncCover sp defs'' qiti name
       _ -> pure ()
-    checkProg' (defs'', qiti'') ds
+    checkProg' defs'' qiti'' ds
 
-checkApd :: SourcePos -> (Defs, QITInfo) -> RApdDef -> IO (Defs, QITInfo)
-checkApd srcpos state (RApdDef f []) = pure state
-checkApd srcpos state (RApdDef f (c:cs)) = do
-  case M.lookup f (fst state) of
+checkApd :: SourcePos -> Defs -> QITInfo -> RApdDef -> IO (Defs, QITInfo)
+checkApd srcpos defs qiti (RApdDef f []) = pure (defs, qiti)
+checkApd srcpos defs qiti (RApdDef f (c:cs)) = do
+  case M.lookup f defs of
     Just (DefFunc fdef) -> do
-      state' <- checkApdCls srcpos state fdef c
-      checkApd srcpos state' (RApdDef f cs)
-    _ -> throwIO $ DefError ((emptyCxt srcpos){defs = fst state}) $ NameNotFoundOrMismatch f
+      state' <- checkApdCls srcpos defs qiti fdef c
+      checkApd srcpos (fst state') (snd state') (RApdDef f cs)
+    _ -> throwIO $ DefError (emptyCxt srcpos) $ NameNotFoundOrMismatch f
 
 -- apd (f ps) {x} {y} e = rhs
-checkApdCls :: SourcePos -> (Defs, QITInfo) -> FuncDef -> RApdClause -> IO (Defs, QITInfo)
-checkApdCls srcpos (defs, qiti) f (RApdClause (R.RPat f' ps) [] rhs) = 
+checkApdCls :: SourcePos -> Defs -> QITInfo -> FuncDef -> RApdClause -> IO (Defs, QITInfo)
+checkApdCls srcpos defs qiti f (RApdClause (R.RPat f' ps) [] rhs) =
   throwIO $ DefError (emptyCxt srcpos) $ DefiningApdForNonQITElim f' ""
-checkApdCls srcpos (defs, qiti) f (RApdClause (R.RPat f' ps) pxye rhs) 
+checkApdCls srcpos defs qiti f (RApdClause (R.RPat f' ps) pxye rhs)
   | funcName f /= f' = throwIO $ DefError (emptyCxt srcpos) $ DefiningApdForWrongFunction (funcName f) f'
   | fst (last pxye) /= Right Expl = throwIO $ DefError (emptyCxt srcpos) $ DefiningApdForNonQITElim (funcName f) (show pxye)
-  | otherwise = do 
-    let cxt = (emptyCxt srcpos){defs = defs, qitInfo = qiti}
-    let vty = eval defs [] (funcType f)
+  | otherwise = withGlobal defs qiti $ do
+    let cxt = emptyCxt srcpos
+    let vty = eval [] (funcType f)
     (ps', cxt', rty) <- E.checkPat False cxt ps vty
     -- Maybe I should check if the pattern given by user is in the canidate patterns of the function.
     -- But seems not necessary
-    case force' cxt' rty of
+    case force rty of
       VPi x Expl a@(VData d sp) b | isQIT d  -> do
         -- make the type of ... {x} {y} e = rhs, and then check pattern
         -- {x : a} {y : a} (e : x ~{a} y) -> cast [b x] [b y] (apd {A} {λ _ → U} {x} {y} B e) (f ps x) ~{b y} f ps y
-        let x = lvl cxt' 
+        let x = lvl cxt'
         let y = x + 1
         let e = y + 1
-        let bx = (defs, b) $$ VVar x
-        let by = (defs, b) $$ VVar y
-        let et = vAppSp defs (VPrim Oeq []) ([] :> (a, Impl) :> (VVar x, Expl) :> (VVar y, Expl))
+        let bx = b $$ VVar x
+        let by = b $$ VVar y
+        let et = vAppSp (VPrim Oeq []) ([] :> (a, Impl) :> (VVar x, Expl) :> (VVar y, Expl))
         let fps = PatFunc (funcName f) ps'
-        let fpsv = p2v (defs, qiti) (lvl cxt) fps
-        let lhs_eq = vAppSp defs (VPrim Cast []) 
+        let fpsv = p2v (lvl cxt) fps
+        let lhs_eq = vAppSp (VPrim Cast [])
                     ([] :> (bx, casticit) :> (by, casticit)
-                        :> (vAppSp defs (VPrim Apd []) -- This part is proof-irrelevant actually.
+                        :> (vAppSp (VPrim Apd []) -- This part is proof-irrelevant actually.
                               ([] :> (a, Impl) :> (VLam "_" Expl (Closure [] U), Impl)
-                                  :> (VVar x, Impl) :> (VVar y, Impl) 
+                                  :> (VVar x, Impl) :> (VVar y, Impl)
                                   :> (VLam "x" Expl b, Expl) :> (VVar e, Expl))
                           , Expl)
-                        :> (vApp defs fpsv (VVar x) Expl, Expl))
-        let rhs_eq = vApp defs fpsv (VVar y) Expl
-        let rhs_ty = vAppSp defs (VPrim Oeq []) ([] :> (by, Impl) :> (lhs_eq, Expl) :> (rhs_eq, Expl))
+                        :> (vApp fpsv (VVar x) Expl, Expl))
+        let rhs_eq = vApp fpsv (VVar y) Expl
+        let rhs_ty = vAppSp (VPrim Oeq []) ([] :> (by, Impl) :> (lhs_eq, Expl) :> (rhs_eq, Expl))
         let xenv = x
         let yenv =  xenv + 1
         let eenv = yenv + 1
         let rhsenv = eenv + 1
-        let rhs_tyQ = quote defs rhsenv rhs_ty
-        let pie = Pi "e" Expl (quote defs eenv et) rhs_tyQ
-        let piy = Pi "y" Impl (quote defs yenv a) pie
-        let pix = Pi "x" Impl (quote defs xenv a) piy 
+        let rhs_tyQ = quote rhsenv rhs_ty
+        let pie = Pi "e" Expl (quote eenv et) rhs_tyQ
+        let piy = Pi "y" Impl (quote yenv a) pie
+        let pix = Pi "x" Impl (quote xenv a) piy
         (pxye', cxt'', rhs_ty') <- E.checkPat False cxt' pxye (evalCxt cxt' pix)
         _ <- E.check cxt'' rhs rhs_ty' -- it is a proof-irrelevant term
         let fpsxye = (fps, Expl) : pxye'
         let qiti' = insertApd (funcName f) fpsxye qiti
         pure (defs, qiti')
-      _ -> throwIO $ DefError cxt $ DefiningApdForNonQITElim (funcName f) (show ps') 
+      _ -> throwIO $ DefError cxt $ DefiningApdForNonQITElim (funcName f) (show ps')
 
 -- Interleaved
 ---------------
 
 addCons :: SourcePos -> (Defs, QITInfo) -> Name ->  [(Name, R.Tm)] -> IO (Defs, QITInfo)
-addCons srcpos (defs, qiti) name = 
-  case M.lookup name defs of 
+addCons srcpos (defs, qiti) name =
+  case M.lookup name defs of
     Just (DefData d) -> go (defs, qiti) d
-    _ -> error "impossible" 
+    _ -> error "impossible"
   where
     go :: (Defs, QITInfo) -> DataDef -> [(Name, R.Tm)] -> IO (Defs, QITInfo)
     go (defs, qiti) d = \case
@@ -252,13 +254,15 @@ addCons srcpos (defs, qiti) name =
         let defs2 = insertCons defs1 (getConstructors d)
         pure (defs2, qiti)
       (c, t) : cs -> do
-        t' <- nf defs [] <$> E.check (emptyCxt srcpos){defs = defs} t VU
+        let ?defs = defs
+        let ?qitInfo = qiti
+        t' <- nf [] <$> E.check (emptyCxt srcpos) t VU
         cons <- checkCons srcpos defs d (c, t')
-        case cons of 
-          Left cons -> do 
+        case cons of
+          Left cons -> do
             let d' = d {dataCons = dataCons d ++ [cons]}
             go (M.insert name (DefData d') defs, qiti) d' cs
-          Right eqcons -> do 
+          Right eqcons -> do
             let qiti' = insertEqCon eqcons qiti
             let defs' = insertEqCons eqcons defs
             go (defs', qiti') d cs
@@ -266,15 +270,15 @@ addCons srcpos (defs, qiti) name =
 insertCons :: Defs -> [(Name, ConsDef)] -> Defs
 insertCons = foldl (\d (n, c) -> M.insert n (DefCons c) d)
 
-insertEqCons :: EqCons -> Defs -> Defs 
+insertEqCons :: EqCons -> Defs -> Defs
 insertEqCons eqc = M.insert (eqName eqc) (DefEq (eqCons2Defs eqc))
 
-addFunCls :: SourcePos -> Defs -> Name -> [R.RClause] -> IO Defs
-addFunCls srcpos defs name = case M.lookup name defs of {Just (DefFunc f) -> go defs f; _ -> error "impossibles"} where
+addFunCls :: SourcePos -> Defs -> QITInfo -> Name -> [R.RClause] -> IO Defs
+addFunCls srcpos defs qiti name = case M.lookup name defs of {Just (DefFunc f) -> go defs f; _ -> error "impossibles"} where
   go defs f = \case
     [] -> pure $ M.insert name (DefFunc f) defs
-    (c:cs) -> do
-      cls <- E.checkCls ((emptyCxt srcpos) {defs = defs}) (funcName f) (funcType f) c
+    (c:cs) -> withGlobal defs qiti $ do
+      cls <- E.checkCls (emptyCxt srcpos) (funcName f) (funcType f) c
       let f' = f {funcClauses = funcClauses f ++ [cls]}
       go defs f' cs
 
@@ -283,8 +287,8 @@ insertMutualSig :: (Defs, QITInfo) -> [(SourcePos, Header)] -> IO Defs
 insertMutualSig (defs, qiti) = \case
   [] -> pure defs
   (sp, h) : rest -> case h of
-    FunHeader name ty -> do
-      checkFunc1 ((emptyCxt sp){defs = defs}) (RFuncDef name ty []) >>= \ f ->
+    FunHeader name ty -> withGlobal defs qiti $ do
+      checkFunc1 (emptyCxt sp) (RFuncDef name ty []) >>= \ f ->
         insertMutualSig (insertFunc defs f, qiti) rest
     DataHeader name isqit ty -> do
       (defs', qiti) <- checkData sp defs qiti (RDataDef name ty [] isqit)
@@ -298,36 +302,36 @@ lookupHeader cxt n = \case
     DataHeader name ty isqit | name == n -> pure h
     _ -> lookupHeader cxt n hs
 
-insertMutualBody :: (Defs, QITInfo) -> [Header] -> [(SourcePos, Body)] -> IO (Defs, QITInfo)
-insertMutualBody (defs, qiti) headers = \case
+insertMutualBody :: Defs -> QITInfo -> [Header] -> [(SourcePos, Body)] -> IO (Defs, QITInfo)
+insertMutualBody defs qiti headers = \case
   [] -> pure (defs, qiti)
   (sp, b) : rest -> case b of
-    FunBody name cls -> do
-      h <- lookupHeader ((emptyCxt sp){defs = defs}) name headers
+    FunBody name cls -> withGlobal defs qiti $ do
+      h <- lookupHeader (emptyCxt sp) name headers
       case h of
         FunHeader _ ty -> do
-          defs' <- addFunCls sp defs name cls
-          insertMutualBody (defs', qiti) headers rest
-        _ -> throwIO $ DefError ((emptyCxt sp){defs = defs}) $ NameNotFoundOrMismatch name
+          defs' <- addFunCls sp defs qiti name cls
+          insertMutualBody defs' qiti headers rest
+        _ -> throwIO $ DefError (emptyCxt sp) $ NameNotFoundOrMismatch name
     DataBody name cons -> do
-      h <- lookupHeader ((emptyCxt sp){defs = defs}) name headers
+      h <- lookupHeader (emptyCxt sp) name headers
       case h of
         DataHeader _ qit ty -> do
           (defs', qiti') <- addCons sp (defs, qiti) name cons
-          insertMutualBody (defs', qiti') headers rest
-        _ -> throwIO $ DefError ((emptyCxt sp){defs = defs}) $ NameNotFoundOrMismatch name
+          insertMutualBody defs' qiti' headers rest
+        _ -> throwIO $ DefError (emptyCxt sp) $ NameNotFoundOrMismatch name
 
-checkProg :: HasCallStack => String -> (Defs, QITInfo) -> Program -> IO (Defs, QITInfo)
-checkProg src state prog = checkProg' state prog `catch` \ e -> do
+checkProg :: HasCallStack => String -> Defs -> QITInfo -> Program -> IO (Defs, QITInfo)
+checkProg src defs qiti prog = checkProg' defs qiti prog `catch` \ e -> do
   displayError src e
   throwIO e
 
 -- Coverage Checking
 -------------------------------
 
-checkFuncCover :: SourcePos -> Defs -> Name -> IO ()
-checkFuncCover srcpos defs fname = do
-    case checkFuncCover' srcpos defs fname of
+checkFuncCover :: SourcePos -> Defs -> QITInfo -> Name -> IO ()
+checkFuncCover srcpos defs qiti fname = do
+    case checkFuncCover' srcpos defs qiti fname of
       Left (E.CoverMissPat ps) -> do
         putStrLn $ "Error: function " ++ fname ++ " is not exhaustive."
         putStrLn $ "Missing the following " ++ show (length ps) ++ " pattern(s):"
@@ -347,9 +351,9 @@ printSp = \case
     q Expl s = "(" ++ s ++ ")"
 
 
-checkFuncCover' :: SourcePos -> Defs -> Name -> Either E.CoverCheckingError ()
-checkFuncCover' srcpos defs fname = do
+checkFuncCover' :: SourcePos -> Defs -> QITInfo -> Name -> Either E.CoverCheckingError ()
+checkFuncCover' srcpos defs qiti fname = withGlobal defs qiti $ do
     case M.lookup fname defs of
       Just (DefFunc f@(FuncDef _ fty (map clausePatterns -> ps))) -> do
-        E.checkCover True ((emptyCxt srcpos) {defs = defs}) f (eval defs [] fty) (arity f) ps
+        E.checkCover True (emptyCxt srcpos) f (eval [] fty) (arity f) ps
       _ -> error " impossible"

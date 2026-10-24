@@ -44,6 +44,7 @@ ghc-options:
 - -Wno-orphans
 
 default-extensions:
+- Strict
 - DerivingVia
 - DeriveAnyClass
 - FlexibleContexts
@@ -52,10 +53,15 @@ default-extensions:
 - OverloadedStrings
 - PatternSynonyms
 - StandaloneDeriving
-- Strict
 - TupleSections
 - ViewPatterns
 - GADTs
+- ImplicitParams
+- ConstraintKinds
+- EmptyCase
+- RecordWildCards
+- DeriveFunctor
+- RankNTypes
 
 library:
   source-dirs: src

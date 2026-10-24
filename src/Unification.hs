@@ -38,14 +38,14 @@ liftN 0 pren = pren
 liftN n pren = liftN (n - 1) (lift pren)
 
 -- | @invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ@
-invert :: Defs -> Lvl -> Spine -> IO PartialRenaming
-invert defs gamma sp = do
+invert :: HasGlobal => Lvl -> Spine -> IO PartialRenaming
+invert gamma sp = do
 
   let go :: Spine -> IO (Lvl, IM.IntMap Lvl)
       go []             = pure (0, mempty)
       go (sp :> (t, _)) = do
         (dom, ren) <- go sp
-        case force defs t of
+        case force t of
           VVar (Lvl x) | IM.notMember x ren -> pure (dom + 1, IM.insert x dom ren)
           _                                 -> throwIO UnifyError
 
@@ -53,22 +53,22 @@ invert defs gamma sp = do
   pure $ PRen dom gamma ren
 
 -- | Perform the partial renaming on rhs, while also checking for "m" occurrences.
-rename :: Defs -> MetaVar -> PartialRenaming -> Val -> IO Tm
-rename defs m pren v = go pren v where
+rename :: HasGlobal => MetaVar -> PartialRenaming -> Val -> IO Tm
+rename m pren v = go pren v where
 
   goCls :: PartialRenaming -> Env -> Clause -> IO Clause
   goCls pren env c@(Clause ps rhs) = do 
     let (cnt, vs) = countVarPat (cod pren) c
     let pren' = liftN cnt pren
-    rhs' <- go pren' (eval defs (map VVar vs ++ env) rhs)
+    rhs' <- go pren' (eval (map VVar vs ++ env) rhs)
     pure $ Clause ps rhs'
     
-  goSp :: PartialRenaming -> Tm -> Spine -> IO Tm
+  goSp :: HasGlobal => PartialRenaming -> Tm -> Spine -> IO Tm
   goSp pren t []             = pure t
   goSp pren t (sp :> (u, i)) = App <$> goSp pren t sp <*> go pren u <*> pure i
 
-  go :: PartialRenaming -> Val -> IO Tm
-  go pren t = case force defs t of
+  go :: HasGlobal => PartialRenaming -> Val -> IO Tm
+  go pren t = case force t of
     VFlex m' sp | m == m'   -> throwIO UnifyError -- occurs check
                 | otherwise -> goSp pren (Meta m') sp
 
@@ -76,8 +76,8 @@ rename defs m pren v = go pren v where
       Nothing -> throwIO UnifyError  -- scope error ("escaping variable" error)
       Just x' -> goSp pren (Var $ lvl2Ix (dom pren) x') sp
 
-    VLam x i t  -> Lam x i <$> go (lift pren) ((defs, t) $$ VVar (cod pren))
-    VPi x i a b -> Pi x i <$> go pren a <*> go (lift pren) ((defs, b) $$ VVar (cod pren))
+    VLam x i t  -> Lam x i <$> go (lift pren) (t $$ VVar (cod pren))
+    VPi x i a b -> Pi x i <$> go pren a <*> go (lift pren) (b $$ VVar (cod pren))
     VU          -> pure U
     VAbsurd t   -> Absurd <$> go pren t
 
@@ -102,46 +102,46 @@ lams = go (0 :: Int) where
   go x []     t = t
   go x (i:is) t = Lam ("x"++show (x+1)) i $ go (x + 1) is t
 
---               Γ      ?α         sp       rhs
-solve :: Defs -> Lvl -> MetaVar -> Spine -> Val -> IO ()
-solve defs gamma m sp rhs = do
-  pren <- invert defs gamma sp
-  rhs  <- rename defs m pren rhs
-  let solution = eval defs [] $ lams (reverse $ map snd sp) rhs
+--                    Γ      ?α         sp       rhs
+solve :: HasGlobal => Lvl -> MetaVar -> Spine -> Val -> IO ()
+solve gamma m sp rhs = do
+  pren <- invert gamma sp
+  rhs  <- rename m pren rhs
+  let solution = eval [] $ lams (reverse $ map snd sp) rhs
   modifyIORef' mcxt $ IM.insert (unMetaVar m) (Solved solution)
 
-unifySp :: Defs -> Env -> Lvl -> Spine -> Spine -> IO ()
-unifySp defs env l sp sp' = case (sp, sp') of
+unifySp :: HasGlobal => Env -> Lvl -> Spine -> Spine -> IO ()
+unifySp env l sp sp' = case (sp, sp') of
   ([]          , []            ) -> pure ()
 
   -- Note: we don't have to compare Icit-s, since we know from the recursive
 -- call that sp and sp' have the same type.
-  (sp :> (t, _), sp' :> (t', _)) -> unifySp defs env l sp sp' >> unify defs env l t t'
+  (sp :> (t, _), sp' :> (t', _)) -> unifySp env l sp sp' >> unify env l t t'
 
   _                              -> throwIO UnifyError -- rigid mismatch error
 
 -- TODO: Typed unification for irrelevance
 -- unify :: Defs -> Env -> Lvl -> VTy -> Val -> Val -> IO ()
-unify :: Defs -> Env -> Lvl -> Val -> Val -> IO ()
-unify defs env l t u = case (force defs t, force defs u) of
-    (VLam _ _ t , VLam _ _ t'    ) -> unify defs (VVar l:env) (l + 1) ((defs, t) $$ VVar l) ((defs, t') $$ VVar l)
-    (t          , VLam _ i t'    ) -> unify defs (VVar l:env) (l + 1) (vApp defs t (VVar l) i) ((defs, t') $$ VVar l)
-    (VLam _ i t , t'             ) -> unify defs (VVar l:env) (l + 1) ((defs, t) $$ VVar l) (vApp defs t' (VVar l) i)
+unify :: HasGlobal =>  Env -> Lvl -> Val -> Val -> IO ()
+unify env l t u = case (force t, force u) of
+    (VLam _ _ t , VLam _ _ t'    ) -> unify (VVar l:env) (l + 1) (t $$ VVar l) (t' $$ VVar l)
+    (t          , VLam _ i t'    ) -> unify (VVar l:env) (l + 1) (vApp t (VVar l) i) (t' $$ VVar l)
+    (VLam _ i t , t'             ) -> unify (VVar l:env) (l + 1) (t $$ VVar l) (vApp t' (VVar l) i)
     (VU         , VU             ) -> pure ()
-    (VPi x i a b, VPi x' i' a' b') | i == i' -> unify defs env l a a' >> unify defs (VVar l:env) (l + 1) ((defs, b) $$ VVar l) ((defs, b') $$ VVar l)
-    (VRigid x sp, VRigid x' sp'  ) | x == x' -> unifySp defs env l sp sp'
-    (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp defs env l sp sp'
+    (VPi x i a b, VPi x' i' a' b') | i == i' -> unify env l a a' >> unify (VVar l:env) (l + 1) (b $$ VVar l) (b' $$ VVar l)
+    (VRigid x sp, VRigid x' sp'  ) | x == x' -> unifySp env l sp sp'
+    (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp env l sp sp'
                                    -- TODO: | otherwise  -> solve' defs l m sp m' sp' 
-    (VFlex m sp , t'             ) -> solve defs l m sp t'
-    (t          , VFlex m' sp'   ) -> solve defs l m' sp' t
+    (VFlex m sp , t'             ) -> solve l m sp t'
+    (t          , VFlex m' sp'   ) -> solve l m' sp' t
     (VFunc f sp , VFunc f' sp'   ) -> unifyFn (f, sp) (f', sp')
     (VHold f sp , VHold f' sp'   ) -> unifyFn (f, sp) (f', sp')
     (VFunc f sp , VHold f' sp'   ) -> unifyFn (f, sp) (f', sp') 
     (VHold f sp , VFunc f' sp'   ) -> unifyFn (f, sp) (f', sp')
     
 
-    (VCons c sp , VCons c' sp'   ) | consName c == consName c' -> unifySp defs env l sp sp' 
-    (VData d sp , VData d' sp'   ) | dataName d == dataName d' -> unifySp defs env l sp sp'
+    (VCons c sp , VCons c' sp'   ) | consName c == consName c' -> unifySp env l sp sp' 
+    (VData d sp , VData d' sp'   ) | dataName d == dataName d' -> unifySp env l sp sp'
 
     (VPropTm    , _       ) -> pure ()
     (_          , VPropTm ) -> pure ()
@@ -152,9 +152,9 @@ unify defs env l t u = case (force defs t, force defs u) of
       | unsafePerformIO $ unifyCast vs t -> pure ()
     (VPrim Apd _, VPrim Apd _) -> pure () -- Fake prop irrelevence
     (VPrim p vs, VPrim p' vs')
-      | p == p' -> unifySp defs env l vs vs'
+      | p == p' -> unifySp env l vs vs'
     (VProj v x vs, VProj v' x' vs')
-      | x == x' -> unify defs env l v v' >> unifySp defs env l vs vs'
+      | x == x' -> unify env l v v' >> unifySp env l vs vs'
 
     (t          , VFunc f  sp    ) -> unifyWithEvalFn t (f, sp)
     (VFunc f  sp, t              ) -> unifyWithEvalFn t (f, sp)
@@ -164,33 +164,32 @@ unify defs env l t u = case (force defs t, force defs u) of
     _                            -> throwIO UnifyError  -- rigid mismatch error
   where 
     unifyFn :: (FuncDef, Spine) -> (FuncDef, Spine) -> IO ()
-    unifyFn (f, sp) (f', sp') | funcName f == funcName f' = unifySp defs env l sp sp'
+    unifyFn (f, sp) (f', sp') | funcName f == funcName f' = unifySp env l sp sp'
                               | otherwise                 = throwIO UnifyError
     unifyWithEvalFn :: Val -> (FuncDef, Spine) -> IO ()
-    unifyWithEvalFn t (f, sp) = case evalFun' defs env f sp of 
-                                  Just v' -> unify defs env l t v'
+    unifyWithEvalFn t (f, sp) = case evalFun' env f sp of 
+                                  Just v' -> unify env l t v'
                                   Nothing -> trace (show t ++ "\n" ++ funcName f ++ " " ++ show sp) $ throwIO UnifyError 
     unifyCast :: Spine -> Val -> IO Bool
     unifyCast vs@(reverse -> [(a, _), (b, _), (p, _), (x, _)]) t = do 
-      b <- tryUnify defs env l a b 
+      b <- tryUnify env l a b 
       if b then 
-        unify defs env l x t >> pure True
+        unify env l x t >> pure True
       else pure False
     unifyCast _ _ = pure False
 
 -- | try unifying, if fails, restore the metacontext and return False
 -- | TODO: We do not want to solve metas during trying unification, 
 -- |       so we need bool arg in unify to control this
-tryUnify :: Defs -> Env -> Lvl -> Val -> Val -> IO Bool
-tryUnify defs env l t u = do 
+tryUnify :: HasGlobal =>  Env -> Lvl -> Val -> Val -> IO Bool
+tryUnify env l t u = do 
   nm <- readIORef nextMeta
   mc <- readIORef mcxt
-  (unify defs env l t u >> putStrLn "Try Succ" >> pure True) 
+  (unify env l t u >> pure True) 
     `catch` \UnifyError -> do
-      putStrLn "Try Failed" 
       writeIORef nextMeta nm
       writeIORef mcxt mc
       pure False
     
-unifyCxt :: Cxt -> VTy -> Val -> Val ->  IO ()
-unifyCxt cxt _ = unify (defs cxt) (env cxt) (lvl cxt)
+unifyCxt :: HasGlobal => Cxt -> VTy -> Val -> Val ->  IO ()
+unifyCxt cxt _ = unify (env cxt) (lvl cxt)

@@ -1,4 +1,3 @@
-{-# LANGUAGE EmptyCase #-}
 module Cxt where
 
 import Common
@@ -20,11 +19,11 @@ import qualified Data.Set as S
 cxtNames :: Cxt -> [Name]
 cxtNames = fmap (\(x, _, _) -> x) . types
 
-showVal :: HasCallStack => Cxt -> Val -> String
+showVal :: HasGlobal => Cxt -> Val -> String
 showVal cxt v =
   prettyTm 0 (cxtNames cxt) (quoteCxt cxt v) []
 
-showSp :: HasCallStack => Cxt -> Spine -> String
+showSp :: HasGlobal => Cxt -> Spine -> String
 showSp cxt sp = join $ map (\(v, i) -> paren i (showVal cxt v)) (reverse sp) where
   paren Impl s = "{" ++ s ++ "} "
   paren Expl s = "(" ++ s ++ ") "
@@ -32,8 +31,8 @@ showSp cxt sp = join $ map (\(v, i) -> paren i (showVal cxt v)) (reverse sp) whe
 showTm :: HasCallStack => Cxt -> Tm -> String
 showTm cxt t = prettyTm 0 (cxtNames cxt) t []
 
-showCxt :: Cxt -> String
-showCxt ctx@(Cxt values _ types _ _ defs _) = "\n" ++ go values types where 
+showCxt :: HasGlobal => Cxt -> String
+showCxt ctx@(Cxt values _ types _ _) = "\n" ++ go values types where 
   go [] [] = ""
   go (v:vs) ((x, ori, t):ts) = 
     go vs ts ++ "\n" ++
@@ -69,23 +68,23 @@ emptyQITInfo :: QITInfo
 emptyQITInfo = QITInfo M.empty M.empty M.empty M.empty
 
 emptyCxt :: SourcePos -> Cxt
-emptyCxt s = Cxt [] 0 [] [] s M.empty emptyQITInfo
+emptyCxt = Cxt [] 0 [] []
 
 -- | Extend Cxt with a bound variable.
 bind :: Cxt -> Name -> VTy -> Cxt
-bind (Cxt env l types bds pos defs qinfo) x ~a =
-  Cxt (env :> VVar l) (l + 1) (types :> (x, Source, a)) (bds :> Bound) pos defs qinfo
+bind (Cxt env l types bds pos) x ~a =
+  Cxt (env :> VVar l) (l + 1) (types :> (x, Source, a)) (bds :> Bound) pos
 
 -- | Insert a new binding.
 newBinder :: Cxt -> Name -> VTy -> Cxt
-newBinder (Cxt env l types bds pos defs qinfo) x ~a =
-  Cxt (env :> VVar l) (l + 1) (types :> (x, Inserted, a)) (bds :> Bound) pos defs qinfo
+newBinder (Cxt env l types bds pos) x ~a =
+  Cxt (env :> VVar l) (l + 1) (types :> (x, Inserted, a)) (bds :> Bound) pos
 
 -- | Extend Cxt with a definition.
 define :: Cxt -> Name -> Val -> VTy -> Cxt
-define (Cxt env l types bds pos defs qinfo) x ~t ~a  =
-  Cxt (env :> t) (l + 1) (types :> (x, Source, a)) (bds :> Defined) pos defs qinfo
+define (Cxt env l types bds pos) x ~t ~a  =
+  Cxt (env :> t) (l + 1) (types :> (x, Source, a)) (bds :> Defined) pos
 
 -- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
-closeVal :: Cxt -> Val -> Closure
-closeVal cxt t = Closure (env cxt) (quote (defs cxt) (lvl cxt + 1) t)
+closeVal :: HasGlobal => Cxt -> Val -> Closure
+closeVal cxt t = Closure (env cxt) (quote (lvl cxt + 1) t)

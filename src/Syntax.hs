@@ -1,6 +1,3 @@
-{-# LANGUAGE EmptyCase #-}
-{-# LANGUAGE DeriveFunctor #-}
-
 module Syntax where
 
 import Common
