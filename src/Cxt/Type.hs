@@ -41,6 +41,7 @@ data QITInfo = QITInfo
   , extraEq :: M.Map Name EqCons -- path constructors given by QITs, indexed by the name of the path constructor
   , extraEq' :: M.Map Name [EqCons] -- indexed by the name of the QIT
   , definedApd :: M.Map Name [PatternTele Empty] -- for which (f ps, {x, y}, e) apd is defined, indexed by the name of `f`
+  , apdClauses :: M.Map Name [Clause] -- TODO: use this field to store the apd clauses, so that we can check the termination
   }
 
 type HasGlobal = (?defs :: Defs, ?qitInfo :: QITInfo, HasCallStack)
@@ -64,12 +65,13 @@ withGlobal' defsR act = do
 
 insertEqCon :: EqCons -> QITInfo -> QITInfo
 insertEqCon eqcons qiti = 
-  qiti { extraEq = M.insert (eqName eqcons) eqcons (extraEq qiti)
+  qiti { extraEq  = M.insert (eqName eqcons) eqcons (extraEq qiti)
        , extraEq' = insertItem (dataName (eqData eqcons)) eqcons (extraEq' qiti) }
 
-insertApd :: Name -> PatternTele Empty -> QITInfo -> QITInfo
-insertApd f ps qiti = 
-  qiti { definedApd = insertItem f ps (definedApd qiti) }
+insertApd :: Name -> PatternTele Empty -> Clause -> QITInfo -> QITInfo
+insertApd f ps cls qiti = 
+  qiti { definedApd = insertItem f ps (definedApd qiti)
+       , apdClauses = insertItem f cls (apdClauses qiti) }
 
 isQITCon :: HasGlobal => Name -> Bool
 isQITCon c = M.member c (extraEq ?qitInfo)

@@ -65,7 +65,7 @@ instance Show Cxt where
   show = show . cxtNames
 
 emptyQITInfo :: QITInfo
-emptyQITInfo = QITInfo M.empty M.empty M.empty M.empty
+emptyQITInfo = QITInfo M.empty M.empty M.empty M.empty M.empty
 
 emptyCxt :: SourcePos -> Cxt
 emptyCxt = Cxt [] 0 [] []

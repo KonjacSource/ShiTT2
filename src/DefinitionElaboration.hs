@@ -24,6 +24,7 @@ import Data.IORef (readIORef)
 import Metacontext
 import Debug.Trace (trace)
 import GHC.IO (unsafePerformIO)
+import Data.Bifunctor
 
 checkFunc1 :: HasGlobal => Cxt -> RFuncDef -> IO FuncDef
 checkFunc1 ctx (RFuncDef func_name func_typ cls) = do
@@ -53,7 +54,7 @@ checkFunc ctx rfun = do
   pure fun
 
 unfoldPi :: Tm -> (Telescope, Tm)
-unfoldPi (Pi x i t b) = ((x,i,t) : fst (unfoldPi b), snd (unfoldPi b))
+unfoldPi (Pi x i t b) = first ((:) (x, i, t)) (unfoldPi b)
 unfoldPi b = ([], b)
 
 
@@ -97,7 +98,7 @@ checkCons s defs dat (c, ty) = do
   case go ty of
     Nothing -> throwIO $ DefError (emptyCxt s) $ ConstructorMustReturnData c
     Just (ispath, ts, args)
-      | not ispath -> pure $ Left(c, ts, args) -- here args is indexes 
+      | not ispath -> pure $ Left (c, ts, args) -- here args is indexes 
       | ispath && isQIT dat -> do
           let [(a, Impl), (lhs, Expl), (rhs, Expl)] = args -- lhs =_{a} rhs
           case goApp a of
@@ -232,9 +233,9 @@ checkApdCls srcpos defs qiti f (RApdClause (R.RPat f' ps) pxye rhs)
         let piy = Pi "y" Impl (quote yenv a) pie
         let pix = Pi "x" Impl (quote xenv a) piy
         (pxye', cxt'', rhs_ty') <- E.checkPat False cxt' pxye (evalCxt cxt' pix)
-        _ <- E.check cxt'' rhs rhs_ty' -- it is a proof-irrelevant term
+        rhs <- E.check cxt'' rhs rhs_ty' -- it is a proof-irrelevant term
         let fpsxye = (fps, Expl) : pxye'
-        let qiti' = insertApd (funcName f) fpsxye qiti
+        let qiti' = insertApd (funcName f) fpsxye (Clause fpsxye rhs) qiti
         pure (defs, qiti')
       _ -> throwIO $ DefError cxt $ DefiningApdForNonQITElim (funcName f) (show ps')
 

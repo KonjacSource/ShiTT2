@@ -4,7 +4,7 @@ import Common
 import qualified Data.Map as M
 
 data Clause = Clause
-  { clausePatterns :: [(Pattern, Icit)]
+  { clausePatterns :: PatternTele Empty
   , clauseRhs :: Tm
   } deriving Show
 
