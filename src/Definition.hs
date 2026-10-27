@@ -70,7 +70,7 @@ getPathConType d ((x, i, t):ts) ix lhs rhs = Pi x i t $ getPathConType d ts ix l
 
 dataType :: DataDef -> Ty 
 dataType d = go (dataIx d) where 
-  go [] = U 
+  go [] = Type 
   go ((x,i,t):ts) = Pi x i t (go ts)
 
 class Arity f where 

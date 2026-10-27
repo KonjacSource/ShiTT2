@@ -26,6 +26,7 @@ data MatchBlocker a
   | BFlex MetaVar
   | BAbsurd  -- Stucking on an absurd term (nothing to do with absurd pattern)
   | BLamCase
+  | BCast
   deriving Functor
 
 -- | Note: Although pattern matching in this project always occurs at the top level,
@@ -41,15 +42,16 @@ match1 env pat val = case (pat, val) of
   (PatCon _ _, VFunc f _)   -> MatchStuck (BFunc f)
   (PatCon _ _, VHold f _)   -> MatchStuck (BFunc f)
   (PatCon _ _, VFlex m _)   -> MatchStuck (BFlex m)
-  (PatCon _ _, VU)          -> MatchFailed
+  (PatCon _ _, VType)          -> MatchFailed
   (PatCon _ _, VData _ _)   -> MatchFailed
   (PatCon _ _, VLam {})     -> MatchFailed
   (PatCon _ _, VPi {})      -> MatchFailed
-  -- (PatCon _ _, VProp)       -> MatchFailed
   (PatCon _ _, VPropTm)     -> MatchFailed
+  (PatCon _ _, VPrim Cast _) -> MatchStuck BCast 
   (PatCon _ _, VPrim _ _)   -> MatchFailed
-  (PatCon _ _, VProj {})    -> MatchFailed
-  (PatCon c ps, VPathCons p args) 
+  (PatCon _ _, VProj {})    -> undefined -- TODO: Should be a stuck
+  (PatCon c ps, VPathCons p args) -- Lean's lesson: large elim over prop level values should not be allowed. 
+                                  -- But here is ok, because the only way to match a path constructor is using `apd`, which is in prop verse.
     | length ps == length args && c == eqNameDef p ->  fmap (PatCon c) (match env ps args)
   (PatCon c ps, VPathCons p args) -> MatchFailed 
   (PatFunc f ps, VFunc f' args)
@@ -133,6 +135,7 @@ vAppBDs env ~v bds = case (env, bds) of
   (env :> t , bds :> Defined) -> vAppBDs env v bds
   _                           -> error "impossible"
 
+-- TODO: adding rules for `f xxx (cast xx)`, as in cubical agda
 eval :: HasGlobal => Env -> Tm -> Val
 eval env = \case
   Var x               -> env !! unIx x
@@ -140,7 +143,7 @@ eval env = \case
   Lam x i t           -> VLam x i (Closure env t)
   Pi x i a b          -> VPi x i (eval env a) (Closure env b)
   Let _ _ t u         -> eval (env :> eval env t) u
-  U                   -> VU
+  Type                   -> VType
   Absurd t            -> VAbsurd (eval env t)
   Meta m              -> vMeta env m
   InsertedMeta m bds  -> vAppBDs env (vMeta env m) bds
@@ -183,7 +186,7 @@ quote l t = case force t of
   VRigid x sp  -> quoteSp l (Var (lvl2Ix l x)) sp
   VLam x i t   -> Lam x i (quote (l + 1) (t $$ VVar l))
   VPi x i a b  -> Pi x i (quote l a) (quote (l + 1) (b $$ VVar l))
-  VU           -> U
+  VType        -> Type
   VAbsurd v    -> Absurd (quote l v)
 
   VCons c sp   -> quoteSp l (Call (consName c)) sp
@@ -232,7 +235,7 @@ fv dep = nub . \case
   VHold _ sp -> fvSp dep sp
   VData _ sp -> fvSp dep sp
   VPathCons _ sp -> fvSp dep sp
-  VU -> []
+  VType -> []
   VPrim _ sp -> fvSp dep sp
   -- VProp -> []
   VPropTm -> error "fv: impossible"

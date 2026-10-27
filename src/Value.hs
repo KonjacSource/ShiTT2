@@ -15,7 +15,7 @@ data Val
   | VRigid Lvl Spine
   | VLam Name Icit {-# unpack #-} Closure
   | VPi Name Icit ~VTy {-# unpack #-} Closure
-  | VU
+  | VType
   | VAbsurd Val
   | VFunc FuncDef Spine -- TODO: Change the FuncDefs to Name. Sometimes the FuncDef might be out of date.
   | VHold FuncDef Spine -- Clauses are exhausted, but the function is still stucked (a neutral term forever)

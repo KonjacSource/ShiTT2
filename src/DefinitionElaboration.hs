@@ -28,7 +28,7 @@ import Data.Bifunctor
 
 checkFunc1 :: HasGlobal => Cxt -> RFuncDef -> IO FuncDef
 checkFunc1 ctx (RFuncDef func_name func_typ cls) = do
-  func_typ' <- E.check ctx func_typ VU
+  func_typ' <- E.check ctx func_typ VType
   let func_typ'' = nf (env ctx) func_typ'
   unless (noMetas func_typ'') $ do
     throwIO $ DefError ctx $ UnsolvedMetaInFuncDef func_name
@@ -65,7 +65,7 @@ insertData defs dat = M.insert (dataName dat) (DefData dat) defs
 
 checkData :: SourcePos -> Defs -> QITInfo -> RDataDef -> IO (Defs, QITInfo)
 checkData s defs qiti rdat = withGlobal defs qiti $ do
-    ix_ty <- withGlobal defs qiti (E.check (emptyCxt s) (dataIxR rdat) VU) >>= checkIx . nf []
+    ix_ty <- withGlobal defs qiti (E.check (emptyCxt s) (dataIxR rdat) VType) >>= checkIx . nf []
     -- (snd -> ix_ty) <- checkTelescope  ()
     let dat_head = DataDef (dataNameR rdat) ix_ty [] (isQITR rdat)
     let defs' = insertData defs dat_head
@@ -74,7 +74,7 @@ checkData s defs qiti rdat = withGlobal defs qiti $ do
   where
     checkIx :: Tm -> IO Telescope
     checkIx tm = case unfoldPi tm of
-      (ix, U) -> pure ix
+      (ix, Type) -> pure ix
       _ -> throwIO $ DefError (emptyCxt s) $ DataMustInU (dataNameR rdat)
 
 -- There might be path constructors in the list
@@ -82,7 +82,7 @@ checkConss :: SourcePos -> Defs -> QITInfo -> DataDef -> [(Name, R.Tm)] -> IO (D
 checkConss s defs qiti dat = \case
   [] -> pure (defs, qiti)
   (c, t) : rest -> withGlobal defs qiti $ do
-    t' <- nf [] <$> E.check (emptyCxt s) t VU
+    t' <- nf [] <$> E.check (emptyCxt s) t VType
     cons <- checkCons s defs dat (c, t')
     case cons of
       Left (c, ts, ix) -> do
@@ -217,7 +217,7 @@ checkApdCls srcpos defs qiti f (RApdClause (R.RPat f' ps) pxye rhs)
         let lhs_eq = vAppSp (VPrim Cast [])
                     ([] :> (bx, casticit) :> (by, casticit)
                         :> (vAppSp (VPrim Apd []) -- This part is proof-irrelevant actually.
-                              ([] :> (a, Impl) :> (VLam "_" Expl (Closure [] U), Impl)
+                              ([] :> (a, Impl) :> (VLam "_" Expl (Closure [] Type), Impl)
                                   :> (VVar x, Impl) :> (VVar y, Impl)
                                   :> (VLam "x" Expl b, Expl) :> (VVar e, Expl))
                           , Expl)
@@ -257,7 +257,7 @@ addCons srcpos (defs, qiti) name =
       (c, t) : cs -> do
         let ?defs = defs
         let ?qitInfo = qiti
-        t' <- nf [] <$> E.check (emptyCxt srcpos) t VU
+        t' <- nf [] <$> E.check (emptyCxt srcpos) t VType
         cons <- checkCons srcpos defs d (c, t')
         case cons of
           Left cons -> do

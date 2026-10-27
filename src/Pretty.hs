@@ -66,7 +66,7 @@ prettyTm prec = go prec where
                                    goLam ns t =
                                      (". "++) . go letp ns t
 
-    U                         -> ("U"++)
+    Type                         -> ("U"++)
     Absurd t                  -> par p appp $ ("absurd "++) . go atomp ns t
     Pi "_" Expl a b           -> par p pip $ go appp ns a . (" → "++) . go pip (ns:>"_") b
 

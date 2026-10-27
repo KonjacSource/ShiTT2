@@ -78,7 +78,7 @@ rename m pren v = go pren v where
 
     VLam x i t  -> Lam x i <$> go (lift pren) (t $$ VVar (cod pren))
     VPi x i a b -> Pi x i <$> go pren a <*> go (lift pren) (b $$ VVar (cod pren))
-    VU          -> pure U
+    VType       -> pure Type
     VAbsurd t   -> Absurd <$> go pren t
 
     VFunc f sp  -> goSp pren (Call (funcName f)) sp
@@ -127,7 +127,7 @@ unify env l t u = case (force t, force u) of
     (VLam _ _ t , VLam _ _ t'    ) -> unify (VVar l:env) (l + 1) (t $$ VVar l) (t' $$ VVar l)
     (t          , VLam _ i t'    ) -> unify (VVar l:env) (l + 1) (vApp t (VVar l) i) (t' $$ VVar l)
     (VLam _ i t , t'             ) -> unify (VVar l:env) (l + 1) (t $$ VVar l) (vApp t' (VVar l) i)
-    (VU         , VU             ) -> pure ()
+    (VType      , VType          ) -> pure ()
     (VPi x i a b, VPi x' i' a' b') | i == i' -> unify env l a a' >> unify (VVar l:env) (l + 1) (b $$ VVar l) (b' $$ VVar l)
     (VRigid x sp, VRigid x' sp'  ) | x == x' -> unifySp env l sp sp'
     (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp env l sp sp'

@@ -45,7 +45,7 @@ data Tm
   | Call Id -- ^ Call functions or datatypes or constructor
   | Lam Name Icit Tm
   | App Tm Tm Icit
-  | U
+  | Type
   | Absurd Tm
   | Pi Name Icit Ty Ty
   | Let Name Ty Tm Tm
@@ -88,7 +88,7 @@ noMetas = \case
   Call _ -> True
   Lam _ _ t -> noMetas t
   App t u _ -> noMetas t && noMetas u
-  U -> True
+  Type -> True
   Absurd _ -> True
   Pi _ _ a b -> noMetas a && noMetas b
   Let _ a t u -> noMetas a && noMetas t && noMetas u

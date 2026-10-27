@@ -105,7 +105,7 @@ check cxt t a = case (t, force a) of
   --   checkCons c sp (evalCxt cxt (consType c)) a
 
   (R.Let x a t u, a') -> do
-    a <- check cxt a VU
+    a <- check cxt a VType
     let va = evalCxt cxt a
     t <- check cxt t va
     let vt = evalCxt cxt t
@@ -128,7 +128,7 @@ check cxt t a = case (t, force a) of
 
   (t, expected) -> do
     (t, inferred) <- insert cxt $ infer cxt t
-    unifyCatch cxt VU expected inferred
+    unifyCatch cxt VType expected inferred
     pure t
 
 infer :: HasGlobal => Cxt -> R.Tm -> IO (Tm, VTy)
@@ -186,22 +186,22 @@ infer cxt = \case
       tty -> do
         a <- evalCxt cxt <$> freshMeta cxt
         b <- Closure (env cxt) <$> freshMeta (bind cxt "x" a)
-        unifyCatch cxt VU tty (VPi "x" i a b)
+        unifyCatch cxt VType tty (VPi "x" i a b)
         pure (a, b)
 
     u <- check cxt u a
     pure (App t u i, b $$ evalCxt cxt u)
 
   R.U ->
-    pure (U, VU)
+    pure (Type, VType)
 
   R.Pi x i a b -> do
-    a <- check cxt a VU
-    b <- check (bind cxt x (evalCxt cxt a)) b VU
-    pure (Pi x i a b, VU)
+    a <- check cxt a VType
+    b <- check (bind cxt x (evalCxt cxt a)) b VType
+    pure (Pi x i a b, VType)
 
   R.Let x a t u -> do
-    a <- check cxt a VU
+    a <- check cxt a VType
     let ~va = evalCxt cxt a
     t <- check cxt t va
     let ~vt = evalCxt cxt t
@@ -225,17 +225,17 @@ infer cxt = \case
   R.Rfl -> do
     pure (Prim Rfl, evalCxt cxt rflTy)
   R.Oeq a u v -> do
-    a <- check cxt a VU -- TODO: Prop-valued equality
+    a <- check cxt a VType -- TODO: Prop-valued equality
     let av = evalCxt cxt a
     u <- check cxt u av
     v <- check cxt v av
-    pure (applySp (Prim Oeq) [(a, Impl), (u, Expl), (v, Expl)], VU)
+    pure (applySp (Prim Oeq) [(a, Impl), (u, Expl), (v, Expl)], VType)
 
 -- apd : {A : U} {B : A → U} {x y : A} (f : (x : A) → B x) (h : x ~{A} y) → 
 -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (f x) =_{B y} f y
 apdTy :: Ty
-apdTy = Pi "A" Impl U $
-        Pi "B" Impl (Pi "_" Expl (Var 0) U) $
+apdTy = Pi "A" Impl Type $
+        Pi "B" Impl (Pi "_" Expl (Var 0) Type) $
         Pi "x" Impl (Var 1) $
         Pi "y" Impl (Var 2) $
         Pi "f" Expl (Pi "x" Expl (Var 3) (App (Var 3) (Var 0) Expl)) $
@@ -250,7 +250,7 @@ apdTy = Pi "A" Impl U $
               [ (eApp b x, casticit)
               , (eApp b y, casticit)
               , (applySp (Prim Apd)
-                    [ (a, Impl), (Lam "_" Expl U, Impl)
+                    [ (a, Impl), (Lam "_" Expl Type, Impl)
                     , (x, Impl), (y, Impl), (b, Expl), (h, Expl)
                     ], Expl)
               , (eApp f x, Expl)
@@ -260,14 +260,14 @@ apdTy = Pi "A" Impl U $
 
 -- cast : [A B : U] → A ~{U} B → A → B
 castTy :: Ty
-castTy = Pi "A" casticit U $
-         Pi "B" casticit U $
-         Pi "_" Expl (applySp (Prim Oeq) [(U, Impl), (Var 1, Expl), (Var 0, Expl)]) $
+castTy = Pi "A" casticit Type $
+         Pi "B" casticit Type $
+         Pi "_" Expl (applySp (Prim Oeq) [(Type, Impl), (Var 1, Expl), (Var 0, Expl)]) $
          Pi "_" Expl (Var 2) $
          Var 2
 
 rflTy :: Ty
-rflTy = Pi "A" Impl U $
+rflTy = Pi "A" Impl Type $
         Pi "x" Expl (Var 0) $
         applySp (Prim Oeq) [(Var 1, Impl), (Var 0, Expl), (Var 0, Expl)]
 
@@ -496,10 +496,10 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VPi x' i' (force ->
               VPrim Oeq sp@(reverse -> [(VData d' dsp, Impl), (lhs', Expl), (rhs', Expl)])
                 | dataName d' == dataName d -> pure sp
               e -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx' e)
-            let oeqTy = Pi "A" Impl U $
+            let oeqTy = Pi "A" Impl Type $
                         Pi "x" Expl (Var 0) $
                         Pi "y" Expl (Var 1) $
-                        U
+                        Type
             -- Work mark
             let oeq_type = evalCxt ctx' oeqTy
             -- remember to unify lhs and rhs
@@ -626,7 +626,7 @@ splitCxt cxt x = case force (findType cxt x) of
           -- make a raw pattern
           let p = R.RPat c_name (makePs c_tele)
           -- check the pattern against x's type
-          cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl x_ty (Closure (env cxt) U)) >>= pure . Just)
+          cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl x_ty (Closure (env cxt) Type)) >>= pure . Just)
                                 `catch` \case
                                   DefError _ (UnsurePattern _ _) -> quitMight
                                   DefError _ (WrongPattern _ _) -> pure Nothing
@@ -650,7 +650,7 @@ splitCxt cxt x = case force (findType cxt x) of
         -- make a raw pattern
         let p = R.RPat c_name (makePs c_tele)
         -- check the pattern against x's type
-        cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl (VPrim Oeq sp) (Closure (env cxt) U)) >>= pure . Just) 
+        cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl (VPrim Oeq sp) (Closure (env cxt) Type)) >>= pure . Just) 
                               `catch` \case
                                 DefError _ (UnsurePattern _ _) -> quitMight
                                 DefError _ (WrongPattern _ _) -> pure Nothing
@@ -794,7 +794,7 @@ checkApdCover fnName = do
               putStrLn $ "Error: There is no apd clause definition for funtion " ++ fnName -- make it better
               pure []
             Just lhss -> pure lhss
-      let res = testManySpine False (FuncDef "dummy-value" U []) lhss cxtsp
+      let res = testManySpine False (FuncDef "dummy-value" Type []) lhss cxtsp
       -- The function def is never used if the first arg is false.
       pure $ case res of
         Nothing -> Left MeetIDKCons
