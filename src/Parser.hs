@@ -75,7 +75,7 @@ pAtom  =
   <|> parens pTm
   <|> (pKeyword "printcxt" >> brackets pTm >>= pure . PrintCxt)
   <|> (pKeyword "sorry" >> pure (PrintCxt Hole))
-  -- <|> (pKeyword "Prop" >> pure Prop)
+  <|> (pKeyword "Prop" >> pure Prop)
   <|> (pKeyword "cast" >> pure Cast)
   <|> (pKeyword "apd" >> pure Apd)
   <|> (pKeyword "rfl" >> pure Rfl)

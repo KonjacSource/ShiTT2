@@ -1,0 +1,5 @@
+def F : (P : Prop) (p q : P) -> Id p q 
+| P p q = refl _
+
+def f : (P : Prop) (p q : P) -> p ~ q
+| P p q = rfl _

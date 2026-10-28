@@ -151,6 +151,7 @@ apdTy = Pi "A" Impl Type $
         in applySp (Prim Oeq) [(eApp b y, Impl), (lhs, Expl), (rhs, Expl)]
 
 -- cast : [A B : U] → A ~{U} B → A → B
+-- Note: cast for prop can be safely postulated.
 castTy :: Ty
 castTy = Pi "A" casticit Type $
          Pi "B" casticit Type $

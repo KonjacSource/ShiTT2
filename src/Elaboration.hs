@@ -1,6 +1,4 @@
-module Elaboration
-  (check, infer, unifyCatch, checkPat, updateCxt, checkCover,
-  CoverCheckingError(..), MissingPattern, splitCxt, checkCls, reportOpnCls, checkApdCover, inferSort) where
+module Elaboration where
 
 import Control.Exception
 import Control.Monad
@@ -41,16 +39,18 @@ freshMeta cxt = do
   pure $ InsertedMeta (MetaVar m) (bds cxt)
 
 unifyCatch :: HasGlobal => Cxt -> Val -> Val -> VTy -> IO ()
-unifyCatch cxt t t' a =
+unifyCatch cxt t t' a = do 
+  let ?unifyOrConv = True
   U.unifyCxt cxt t t' a
-  `catch` \UnifyError ->
-    throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
+    `catch` \UnifyError ->
+      throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
 
 unifyCatchTy :: HasGlobal => Cxt -> VTy -> VTy -> IO ()
-unifyCatchTy cxt t t' =
+unifyCatchTy cxt t t' = do 
+  let ?unifyOrConv = True
   U.unifyCxtTy cxt t t'
-  `catch` \UnifyError ->
-    throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
+    `catch` \UnifyError ->
+      throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
 
 -- | Insert fresh implicit applications.
 insert' :: HasGlobal => Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
@@ -142,12 +142,11 @@ inferSort :: HasGlobal => Cxt -> R.Tm -> IO (Ty, Sort)
 inferSort cxt t = case t of 
   R.SrcPos pos t -> inferSort (cxt {pos = pos}) t
   R.Prop -> pure (Prop, SType) 
-  R.U -> pure (Type, SType)
+  R.U    -> pure (Type, SType)
   R.Pi x i a b -> do 
     (a, at) <- inferSort cxt a
     (b, bt) <- inferSort (bind cxt x (evalCxt cxt a)) b
     pure (Pi x i a b, imax at bt)
-  
   _ -> do 
     (t, ty) <- infer cxt t
     case force ty of 
@@ -334,7 +333,8 @@ unify ctx u v t = do
       | dataName d == dataName d' ->
           unifySp ctx us vs $ evalCxt ctx (dataType d)
       | otherwise -> pure UnifFail
-    (u, v, t) ->
+    (u, v, t) -> do 
+      let ?unifyOrConv = True
       (U.unify ctx u v t >> pure (UnifOk ctx))
       `catch` \ UnifyError ->
           pure UnifStuck
