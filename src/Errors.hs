@@ -30,6 +30,7 @@ data ElabError
   | UnsolvedMetaInLambdaCase 
   | LambdaCaseUnCover
   | TypeMismatch (Either String Tm) {-Exp-} Tm {-Act-} Tm
+  | NotAType Tm
   deriving (Show, Exception)
 
 data DefElabError 
@@ -91,6 +92,8 @@ displayError file (Error cxt e) = do
           "  Expected: " ++ either id (showTm cxt) t1 ++ "\n" ++
           "  Inferred: " ++ showTm cxt t2 ++ "\n" ++
           "  Term: " ++ showTm cxt t3
+        NotAType t ->
+          "Not a type: " ++ showTm cxt t
 
   printf "%s:%d:%d:\n" path linum colnum
   printf "%s |\n"    lpad

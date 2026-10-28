@@ -18,7 +18,8 @@ data Val
   | VType
   | VAbsurd Val
   | VFunc FuncDef Spine -- TODO: Change the FuncDefs to Name. Sometimes the FuncDef might be out of date.
-  | VHold FuncDef Spine -- Clauses are exhausted, but the function is still stucked (a neutral term forever)
+  | VHold FuncDef Spine (Maybe MetaVar) 
+  -- ^ Clauses are exhausted, but the function is still stucked. We store the meta variable if the function is stucked on a meta
   | VData DataDef Spine 
   | VCons ConsDef Spine
   | VPathCons EqConsDef Spine

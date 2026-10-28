@@ -81,7 +81,7 @@ prettyTm prec = go prec where
     Meta m                    -> (("?"++show m)++)
     InsertedMeta m bds        -> goBDS p ns m bds
     Call f                    -> (f ++)
-    -- Prop                      -> ("Prop"++)
+    Prop                      -> ("Prop"++)
     PropTm                    -> ("..." ++)
     Prim p                    -> (show p ++)
     Proj t x                  -> par p appp $ go appp ns t . ((" ."++x)++) 

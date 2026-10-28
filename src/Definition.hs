@@ -28,7 +28,8 @@ data EqConsDef = EqConsDef
 data FuncDef = FuncDef
   { funcName :: Name
   , funcType :: Ty -- ^ Type of the function
-  , funcClauses :: [Clause]
+  , funcClauses :: [Clause] 
+  -- TODO: change this to a Defs lookup function, because this field might be out of date when we using interleaved functions
   } 
 
 data DataDef = DataDef

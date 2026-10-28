@@ -1,6 +1,6 @@
 module Elaboration
-  (check, infer, unifyCatch, findType, checkPat, updateCxt, checkCover,
-  CoverCheckingError(..), MissingPattern, splitCxt, checkCls, reportOpnCls, checkApdCover) where
+  (check, infer, unifyCatch, checkPat, updateCxt, checkCover,
+  CoverCheckingError(..), MissingPattern, splitCxt, checkCls, reportOpnCls, checkApdCover, inferSort) where
 
 import Control.Exception
 import Control.Monad
@@ -16,6 +16,7 @@ import Evaluation
 import Metacontext
 import Syntax
 import qualified Unification as U
+import Unification (findType)
 import Value
 
 import qualified Presyntax as R
@@ -39,9 +40,15 @@ freshMeta cxt = do
   modifyIORef' mcxt $ IM.insert m Unsolved
   pure $ InsertedMeta (MetaVar m) (bds cxt)
 
-unifyCatch :: HasGlobal => Cxt -> VTy -> Val -> Val -> IO ()
-unifyCatch cxt a t t' =
-  U.unifyCxt cxt a t t'
+unifyCatch :: HasGlobal => Cxt -> Val -> Val -> VTy -> IO ()
+unifyCatch cxt t t' a =
+  U.unifyCxt cxt t t' a
+  `catch` \UnifyError ->
+    throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
+
+unifyCatchTy :: HasGlobal => Cxt -> VTy -> VTy -> IO ()
+unifyCatchTy cxt t t' =
+  U.unifyCxtTy cxt t t'
   `catch` \UnifyError ->
     throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
 
@@ -105,7 +112,7 @@ check cxt t a = case (t, force a) of
   --   checkCons c sp (evalCxt cxt (consType c)) a
 
   (R.Let x a t u, a') -> do
-    a <- check cxt a VType
+    (a, _) <- inferSort cxt a
     let va = evalCxt cxt a
     t <- check cxt t va
     let vt = evalCxt cxt t
@@ -128,8 +135,28 @@ check cxt t a = case (t, force a) of
 
   (t, expected) -> do
     (t, inferred) <- insert cxt $ infer cxt t
-    unifyCatch cxt VType expected inferred
+    unifyCatchTy cxt expected inferred
     pure t
+
+inferSort :: HasGlobal => Cxt -> R.Tm -> IO (Ty, Sort) 
+inferSort cxt t = case t of 
+  R.SrcPos pos t -> inferSort (cxt {pos = pos}) t
+  R.Prop -> pure (Prop, SType) 
+  R.U -> pure (Type, SType)
+  R.Pi x i a b -> do 
+    (a, at) <- inferSort cxt a
+    (b, bt) <- inferSort (bind cxt x (evalCxt cxt a)) b
+    pure (Pi x i a b, imax at bt)
+  
+  _ -> do 
+    (t, ty) <- infer cxt t
+    case force ty of 
+      VType -> pure (t, SType)
+      VProp -> pure (t, SProp)
+      VFlex _ _ -> do
+        unifyCatchTy cxt ty VType
+        pure (t, SType)  -- TODO: We ignore that the case when t is in Prop, we should add this back when we have typed meta 
+      _ -> throwIO $ Error cxt $ NotAType (quoteCxt cxt ty)
 
 infer :: HasGlobal => Cxt -> R.Tm -> IO (Tm, VTy)
 infer cxt = \case
@@ -186,22 +213,22 @@ infer cxt = \case
       tty -> do
         a <- evalCxt cxt <$> freshMeta cxt
         b <- Closure (env cxt) <$> freshMeta (bind cxt "x" a)
-        unifyCatch cxt VType tty (VPi "x" i a b)
+        unifyCatchTy cxt tty (VPi "x" i a b)
         pure (a, b)
 
     u <- check cxt u a
     pure (App t u i, b $$ evalCxt cxt u)
 
-  R.U ->
-    pure (Type, VType)
-
-  R.Pi x i a b -> do
-    a <- check cxt a VType
-    b <- check (bind cxt x (evalCxt cxt a)) b VType
-    pure (Pi x i a b, VType)
-
+  R.U    -> pure (Type, VType)
+  R.Prop -> pure (Prop, VType)
+  t@(R.Pi {}) -> do
+    (t, sort) <- inferSort cxt t
+    case sort of
+      SType -> pure (t, VType)
+      SProp -> pure (t, VProp)
+    
   R.Let x a t u -> do
-    a <- check cxt a VType
+    (a, _) <- inferSort cxt a
     let ~va = evalCxt cxt a
     t <- check cxt t va
     let ~vt = evalCxt cxt t
@@ -217,7 +244,6 @@ infer cxt = \case
     ty <- evalCxt cxt <$> freshMeta cxt
     t <- check cxt t ty
     pure (t, ty)
-  R.Prop -> pure (Prop, VType)
   R.Cast -> do
     pure (Prim Cast, evalCxt cxt castTy)
   R.Apd -> do
@@ -225,55 +251,11 @@ infer cxt = \case
   R.Rfl -> do
     pure (Prim Rfl, evalCxt cxt rflTy)
   R.Oeq a u v -> do
-    a <- check cxt a VType -- TODO: Prop-valued equality
+    (a, _) <- inferSort cxt a 
     let av = evalCxt cxt a
     u <- check cxt u av
     v <- check cxt v av
     pure (applySp (Prim Oeq) [(a, Impl), (u, Expl), (v, Expl)], VProp)
-
--- apd : {A : U} {B : A → U} {x y : A} (f : (x : A) → B x) (h : x ~{A} y) → 
--- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (f x) =_{B y} f y
-apdTy :: Ty
-apdTy = Pi "A" Impl Type $
-        Pi "B" Impl (Pi "_" Expl (Var 0) Type) $
-        Pi "x" Impl (Var 1) $
-        Pi "y" Impl (Var 2) $
-        Pi "f" Expl (Pi "x" Expl (Var 3) (App (Var 3) (Var 0) Expl)) $
-        Pi "h" Expl (applySp (Prim Oeq) [(Var 4, Impl), (Var 2, Expl), (Var 1, Expl)]) $
-        let h = Var 0
-            f = Var 1
-            y = Var 2
-            x = Var 3
-            b = Var 4
-            a = Var 5
-            lhs = applySp (Prim Cast) $
-              [ (eApp b x, casticit)
-              , (eApp b y, casticit)
-              , (applySp (Prim Apd)
-                    [ (a, Impl), (Lam "_" Expl Type, Impl)
-                    , (x, Impl), (y, Impl), (b, Expl), (h, Expl)
-                    ], Expl)
-              , (eApp f x, Expl)
-              ]
-            rhs = eApp f y
-        in applySp (Prim Oeq) [(eApp b y, Impl), (lhs, Expl), (rhs, Expl)]
-
--- cast : [A B : U] → A ~{U} B → A → B
-castTy :: Ty
-castTy = Pi "A" casticit Type $
-         Pi "B" casticit Type $
-         Pi "_" Expl (applySp (Prim Oeq) [(Type, Impl), (Var 1, Expl), (Var 0, Expl)]) $
-         Pi "_" Expl (Var 2) $
-         Var 2
-
-rflTy :: Ty
-rflTy = Pi "A" Impl Type $
-        Pi "x" Expl (Var 0) $
-        applySp (Prim Oeq) [(Var 1, Impl), (Var 0, Expl), (Var 0, Expl)]
-
-findType :: Cxt -> Lvl -> VTy
-findType cxt (lvl2Ix (lvl cxt) -> unIx -> ix) = case types cxt !! ix of
-  (_, _, a) -> a
 
 --------------------------------
 -- Check the Pattern Matching --
@@ -352,8 +334,8 @@ unify ctx u v t = do
       | dataName d == dataName d' ->
           unifySp ctx us vs $ evalCxt ctx (dataType d)
       | otherwise -> pure UnifFail
-    (u, v, _) ->
-      (U.unify (env ctx) (lvl ctx) u v >> pure (UnifOk ctx))
+    (u, v, t) ->
+      (U.unify ctx u v t >> pure (UnifOk ctx))
       `catch` \ UnifyError ->
           pure UnifStuck
 

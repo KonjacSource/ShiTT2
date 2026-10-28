@@ -21,10 +21,10 @@ data MatchResult a
   deriving Functor
 
 data MatchBlocker a
-  = BVar Lvl a -- Stucking variable. Mark for QIT checking
+  = BVar Lvl a -- ^ Stucking variable. Mark for QIT checking
   | BFunc FuncDef
   | BFlex MetaVar
-  | BAbsurd  -- Stucking on an absurd term (nothing to do with absurd pattern)
+  | BAbsurd  -- ^ Stucking on an absurd term (nothing to do with absurd pattern)
   | BLamCase
   | BCast
   deriving Functor
@@ -40,7 +40,8 @@ match1 env pat val = case (pat, val) of
   (PatCon _ _, VAbsurd _)   -> MatchStuck BAbsurd
   (PatCon _ _, VRigid x _)  -> MatchStuck (BVar x (PatMark ()))
   (PatCon _ _, VFunc f _)   -> MatchStuck (BFunc f)
-  (PatCon _ _, VHold f _)   -> MatchStuck (BFunc f)
+  (PatCon _ _, VHold f _ Nothing) -> MatchStuck (BFunc f)
+  (PatCon _ _, VHold f _ (Just m)) -> MatchStuck (BFlex m)
   (PatCon _ _, VFlex m _)   -> MatchStuck (BFlex m)
   (PatCon _ _, VType)       -> error "impossible" 
   (PatCon _ _, VData _ _)   -> error "impossible"
@@ -59,7 +60,7 @@ match1 env pat val = case (pat, val) of
   (PatCon c ps, VPathCons p args) -> MatchFailed 
   (PatFunc f ps, VFunc f' args)
     | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match env ps args)
-  (PatFunc f ps, VHold f' args)
+  (PatFunc f ps, VHold f' args _)
     | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match env ps args)
   (PatFunc f ps, _) -> MatchFailed -- for apd clause, we consider function names as codes 
 
@@ -86,11 +87,11 @@ vApp t u i = case force t of
   VRigid x sp     -> VRigid x (sp :> (u, i))
   -- env is used here,  when t is a meta solution, so that env = [], then t must be a closed term. so sp is empty too.
   VFunc f sp
-    | length sp + 1 < arity f -> evalFun [] f (funcClauses f) (sp :> (u, i))
+    | length sp + 1 < arity f -> evalFun [] f (funcClauses f) (sp :> (force u, i))
     | otherwise -> 
-        let (rest, sp') = splitAt (length sp + 1 - arity f) (sp :> (u,i)) in
+        let (rest, sp') = splitAt (length sp + 1 - arity f) (sp :> (force u,i)) in
           vAppSp (evalFun [] f (funcClauses f) sp') rest
-  VHold f sp -> VHold f (sp :> (u,i))
+  VHold f sp m -> VHold f (sp :> (u,i)) m
   VCons c sp -> VCons c (sp :> (u,i))
   VPathCons c sp -> VPathCons c (sp :> (u, i))
   VData d sp -> VData d (sp :> (u,i))
@@ -100,14 +101,15 @@ vApp t u i = case force t of
 
 -- | Make sure `(length sp) <= arity f`
 evalFun :: HasGlobal => Env -> FuncDef -> [Clause] -> Spine -> Val
-evalFun env f [] sp = VHold f sp -- No matchable clause yet.
+evalFun env f [] sp = VHold f sp Nothing -- No matchable clause yet.
 evalFun env f (c:cs) sp
   | length sp < arity f = VFunc f sp -- Wait
   | otherwise = -- `length sp == arity f`
       case match env (clausePatterns c) sp of
-        MatchFailed -> evalFun env f cs sp --Failed
-        MatchStuck _ -> VHold f sp       -- Stucked
-        MatchSuc env' -> eval env' (clauseRhs c) -- Succeeded
+        MatchFailed          -> evalFun env f cs sp --Failed
+        MatchStuck (BFlex m) -> VHold f sp (Just m)       -- Stucked by a meta
+        MatchStuck _         -> VHold f sp Nothing 
+        MatchSuc env'        -> eval env' (clauseRhs c) -- Succeeded
 
 -- Return Nothing if stucked or no matching clause
 evalFun' :: HasGlobal => Env -> FuncDef -> Spine -> Maybe Val
@@ -170,6 +172,8 @@ evalCxt ctx = eval (env ctx)
 force :: HasGlobal => Val -> Val
 force = \case
   VFlex m sp | Solved t <- lookupMeta m -> force (vAppSp t sp) -- t is in empty env
+  VHold f sp (Just m)
+    | Solved _ <- lookupMeta m -> vAppSp (VFunc f []) sp
   t -> t
 
 lvl2Ix :: Lvl -> Lvl -> Ix
@@ -194,7 +198,7 @@ quote l t = case force t of
 
   VCons c sp   -> quoteSp l (Call (consName c)) sp
   VFunc f sp   -> quoteSp l (Call (funcName f)) sp
-  VHold f sp   -> quoteSp l (Call (funcName f)) sp
+  VHold f sp _ -> quoteSp l (Call (funcName f)) sp
   VData d sp   -> quoteSp l (Call (dataName d)) sp
   VPathCons f sp -> quoteSp l (Call (eqNameDef f)) sp
   VProp        -> Prop
@@ -235,7 +239,7 @@ fv dep = nub . \case
   VAbsurd v -> fv dep v
   VCons _ sp -> fvSp dep sp
   VFunc _ sp -> fvSp dep sp
-  VHold _ sp -> fvSp dep sp
+  VHold _ sp _-> fvSp dep sp
   VData _ sp -> fvSp dep sp
   VPathCons _ sp -> fvSp dep sp
   VType -> []

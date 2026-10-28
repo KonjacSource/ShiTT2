@@ -28,7 +28,7 @@ import Data.Bifunctor
 
 checkFunc1 :: HasGlobal => Cxt -> RFuncDef -> IO FuncDef
 checkFunc1 ctx (RFuncDef func_name func_typ cls) = do
-  func_typ' <- E.check ctx func_typ VType
+  (func_typ', _) <- E.inferSort ctx func_typ -- TODO: typed meta, use this info
   let func_typ'' = nf (env ctx) func_typ'
   unless (noMetas func_typ'') $ do
     throwIO $ DefError ctx $ UnsolvedMetaInFuncDef func_name
@@ -82,7 +82,7 @@ checkConss :: SourcePos -> Defs -> QITInfo -> DataDef -> [(Name, R.Tm)] -> IO (D
 checkConss s defs qiti dat = \case
   [] -> pure (defs, qiti)
   (c, t) : rest -> withGlobal defs qiti $ do
-    t' <- nf [] <$> E.check (emptyCxt s) t VType
+    t' <- nf [] . fst <$> E.inferSort (emptyCxt s) t
     cons <- checkCons s defs dat (c, t')
     case cons of
       Left (c, ts, ix) -> do
@@ -257,7 +257,7 @@ addCons srcpos (defs, qiti) name =
       (c, t) : cs -> do
         let ?defs = defs
         let ?qitInfo = qiti
-        t' <- nf [] <$> E.check (emptyCxt srcpos) t VType
+        t' <- nf [] . fst <$> E.inferSort (emptyCxt srcpos) t
         cons <- checkCons srcpos defs d (c, t')
         case cons of
           Left cons -> do
