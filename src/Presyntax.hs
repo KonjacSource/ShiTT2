@@ -14,7 +14,7 @@ data Tm
   | SrcPos SourcePos Tm            -- source position for error reporting
   | Hole                           -- _
   | PrintCxt Tm                    -- printcxt[Tm]
-  -- | Prop                           -- Prop
+  | Prop                           -- Prop
   | Cast                           -- cast
   | Apd                            -- apd
   | Oeq Tm Tm Tm                   -- a ~{A} b, or a ~ b for a ~{_} b
@@ -34,7 +34,7 @@ stripPos = \case
   SrcPos _ t   -> stripPos t
   Hole         -> Hole
   PrintCxt t   -> PrintCxt (stripPos t)
-  -- Prop         -> Prop  
+  Prop         -> Prop  
   Cast         -> Cast
   Apd          -> Apd
   Rfl          -> Rfl

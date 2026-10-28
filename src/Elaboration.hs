@@ -217,7 +217,7 @@ infer cxt = \case
     ty <- evalCxt cxt <$> freshMeta cxt
     t <- check cxt t ty
     pure (t, ty)
-  -- R.Prop -> pure (Prop, VU)
+  R.Prop -> pure (Prop, VType)
   R.Cast -> do
     pure (Prim Cast, evalCxt cxt castTy)
   R.Apd -> do
@@ -229,7 +229,7 @@ infer cxt = \case
     let av = evalCxt cxt a
     u <- check cxt u av
     v <- check cxt v av
-    pure (applySp (Prim Oeq) [(a, Impl), (u, Expl), (v, Expl)], VType)
+    pure (applySp (Prim Oeq) [(a, Impl), (u, Expl), (v, Expl)], VProp)
 
 -- apd : {A : U} {B : A → U} {x y : A} (f : (x : A) → B x) (h : x ~{A} y) → 
 -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (f x) =_{B y} f y

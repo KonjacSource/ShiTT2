@@ -42,14 +42,17 @@ match1 env pat val = case (pat, val) of
   (PatCon _ _, VFunc f _)   -> MatchStuck (BFunc f)
   (PatCon _ _, VHold f _)   -> MatchStuck (BFunc f)
   (PatCon _ _, VFlex m _)   -> MatchStuck (BFlex m)
-  (PatCon _ _, VType)          -> MatchFailed
-  (PatCon _ _, VData _ _)   -> MatchFailed
-  (PatCon _ _, VLam {})     -> MatchFailed
-  (PatCon _ _, VPi {})      -> MatchFailed
-  (PatCon _ _, VPropTm)     -> MatchFailed
+  (PatCon _ _, VType)       -> error "impossible" 
+  (PatCon _ _, VData _ _)   -> error "impossible"
+  (PatCon _ _, VLam {})     -> error "impossible"
+  (PatCon _ _, VPi {})      -> error "impossible"
+  (PatCon _ _, VPropTm)     -> error "impossible"
   (PatCon _ _, VPrim Cast _) -> MatchStuck BCast 
-  (PatCon _ _, VPrim _ _)   -> MatchFailed
-  (PatCon _ _, VProj {})    -> undefined -- TODO: Should be a stuck
+  (PatCon _ _, VPrim Apd _)  -> error "impossible"
+  (PatCon _ _, VPrim Oeq _)  -> error "impossible"
+  (PatCon _ _, VPrim Rfl _)  -> error "impossible"
+  (PatCon _ _, VProp)        -> error "impossible" 
+  (PatCon _ _, VProj {})     -> undefined -- TODO: Should be a stuck
   (PatCon c ps, VPathCons p args) -- Lean's lesson: large elim over prop level values should not be allowed. 
                                   -- But here is ok, because the only way to match a path constructor is using `apd`, which is in prop verse.
     | length ps == length args && c == eqNameDef p ->  fmap (PatCon c) (match env ps args)
@@ -155,7 +158,7 @@ eval env = \case
                           Just (DefEq  eq) -> VPathCons eq []
                           Just (DefCons c) -> VCons c []
                           Nothing -> error $ "eval: impossible " ++ show f
-  -- Prop                -> VProp
+  Prop                -> VProp
   PropTm              -> VPropTm
   Prim Cast           -> VPrim Cast []
   Prim p              -> VPrim p []
@@ -194,7 +197,7 @@ quote l t = case force t of
   VHold f sp   -> quoteSp l (Call (funcName f)) sp
   VData d sp   -> quoteSp l (Call (dataName d)) sp
   VPathCons f sp -> quoteSp l (Call (eqNameDef f)) sp
-  -- VProp        -> Prop
+  VProp        -> Prop
   VPropTm      -> PropTm
   VPrim p sp   -> quoteSp l (Prim p) sp
   VProj v x sp -> quoteSp l (Proj (quote l v) x) sp
@@ -237,7 +240,7 @@ fv dep = nub . \case
   VPathCons _ sp -> fvSp dep sp
   VType -> []
   VPrim _ sp -> fvSp dep sp
-  -- VProp -> []
+  VProp -> []
   VPropTm -> error "fv: impossible"
   VProj v x sp -> fv dep v ++ fvSp dep sp
   -- fv is only used in PMunification case "x = t", if type of x is a prop, then x should be a prop term already.

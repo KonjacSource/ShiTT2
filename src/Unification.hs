@@ -86,7 +86,7 @@ rename m pren v = go pren v where
     VData f sp  -> goSp pren (Call (dataName f)) sp
     VCons f sp  -> goSp pren (Call (consName f)) sp
     VPathCons f sp -> goSp pren (Call (eqNameDef f)) sp
-    -- VProp       -> pure Prop
+    VProp       -> pure Prop
     VPropTm     -> pure PropTm
     VPrim p sp  -> goSp pren (Prim p) sp
     VProj v x sp -> do 

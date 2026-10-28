@@ -52,7 +52,7 @@ data Tm
   | Meta MetaVar
   | InsertedMeta MetaVar [BD]
 
-  -- | Prop 
+  | Prop 
   | PropTm -- A term of a proposition type
   | Prim Prim
   | Proj Tm Name
@@ -95,7 +95,7 @@ noMetas = \case
   Meta _ -> False
   InsertedMeta _ _ -> False
   
-  -- Prop -> True
+  Prop -> True
   PropTm -> True 
   Prim _ -> True
   Proj t _ -> noMetas t

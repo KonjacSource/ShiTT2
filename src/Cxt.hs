@@ -16,6 +16,33 @@ import qualified Data.Set as S
 -- Elaboration context
 --------------------------------------------------------------------------------
 
+emptyQITInfo :: QITInfo
+emptyQITInfo = QITInfo M.empty M.empty M.empty M.empty M.empty
+
+emptyCxt :: SourcePos -> Cxt
+emptyCxt = Cxt [] 0 [] []
+
+-- | Extend Cxt with a bound variable.
+bind :: Cxt -> Name -> VTy -> Cxt
+bind (Cxt env l types bds pos) x ~a =
+  Cxt (env :> VVar l) (l + 1) (types :> (x, Source, a)) (bds :> Bound) pos
+
+-- | Insert a new binding.
+newBinder :: Cxt -> Name -> VTy -> Cxt
+newBinder (Cxt env l types bds pos) x ~a =
+  Cxt (env :> VVar l) (l + 1) (types :> (x, Inserted, a)) (bds :> Bound) pos
+
+-- | Extend Cxt with a definition.
+define :: Cxt -> Name -> Val -> VTy -> Cxt
+define (Cxt env l types bds pos) x ~t ~a  =
+  Cxt (env :> t) (l + 1) (types :> (x, Source, a)) (bds :> Defined) pos
+
+-- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
+closeVal :: HasGlobal => Cxt -> Val -> Closure
+closeVal cxt t = Closure (env cxt) (quote (lvl cxt + 1) t)
+
+-- Printing stuff
+--------------------
 cxtNames :: Cxt -> [Name]
 cxtNames = fmap (\(x, _, _) -> x) . types
 
@@ -63,28 +90,3 @@ showFunc (FuncDef funcName fty cls) = "def " ++ funcName ++ " : " ++ showTm0 fty
 
 instance Show Cxt where
   show = show . cxtNames
-
-emptyQITInfo :: QITInfo
-emptyQITInfo = QITInfo M.empty M.empty M.empty M.empty M.empty
-
-emptyCxt :: SourcePos -> Cxt
-emptyCxt = Cxt [] 0 [] []
-
--- | Extend Cxt with a bound variable.
-bind :: Cxt -> Name -> VTy -> Cxt
-bind (Cxt env l types bds pos) x ~a =
-  Cxt (env :> VVar l) (l + 1) (types :> (x, Source, a)) (bds :> Bound) pos
-
--- | Insert a new binding.
-newBinder :: Cxt -> Name -> VTy -> Cxt
-newBinder (Cxt env l types bds pos) x ~a =
-  Cxt (env :> VVar l) (l + 1) (types :> (x, Inserted, a)) (bds :> Bound) pos
-
--- | Extend Cxt with a definition.
-define :: Cxt -> Name -> Val -> VTy -> Cxt
-define (Cxt env l types bds pos) x ~t ~a  =
-  Cxt (env :> t) (l + 1) (types :> (x, Source, a)) (bds :> Defined) pos
-
--- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
-closeVal :: HasGlobal => Cxt -> Val -> Closure
-closeVal cxt t = Closure (env cxt) (quote (lvl cxt + 1) t)

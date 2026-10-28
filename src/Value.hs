@@ -23,7 +23,7 @@ data Val
   | VCons ConsDef Spine
   | VPathCons EqConsDef Spine
 
-  -- | VProp 
+  | VProp 
   | VPropTm 
   | VPrim Prim Spine 
   | VProj Val Name Spine
