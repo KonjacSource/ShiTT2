@@ -10,7 +10,8 @@ import Definition
 import qualified Data.Map as M
 import GHC.Stack (HasCallStack)
 import Text.Printf (printf)
-import Data.Bifunctor (Bifunctor(first))
+import Data.Bifunctor 
+import Data.Maybe
 
 
 data MatchResult a
@@ -27,6 +28,7 @@ data MatchBlocker a
   | BAbsurd  -- ^ Stucking on an absurd term (nothing to do with absurd pattern)
   | BLamCase
   | BCast
+  | BProj
   deriving Functor
 
 -- | Note: Although pattern matching in this project always occurs at the top level,
@@ -43,21 +45,23 @@ match1 env pat val = case (pat, val) of
   (PatCon _ _, VHold f _ Nothing) -> MatchStuck (BFunc f)
   (PatCon _ _, VHold f _ (Just m)) -> MatchStuck (BFlex m)
   (PatCon _ _, VFlex m _)   -> MatchStuck (BFlex m)
-  (PatCon _ _, VType)       -> error "impossible" 
+  (PatCon _ _, VType)       -> error "impossible"
   (PatCon _ _, VData _ _)   -> error "impossible"
   (PatCon _ _, VLam {})     -> error "impossible"
   (PatCon _ _, VPi {})      -> error "impossible"
   (PatCon _ _, VPropTm)     -> error "impossible"
-  (PatCon _ _, VPrim Cast _) -> MatchStuck BCast 
+  (PatCon _ _, VPrim Cast _) -> MatchStuck BCast
   (PatCon _ _, VPrim Apd _)  -> error "impossible"
   (PatCon _ _, VPrim Oeq _)  -> error "impossible"
   (PatCon _ _, VPrim Rfl _)  -> error "impossible"
-  (PatCon _ _, VProp)        -> error "impossible" 
-  (PatCon _ _, VProj {})     -> undefined -- TODO: Should be a stuck
+  (PatCon _ _, VProp)        -> error "impossible"
+  (PatCon _ _, VMkSig ts)    -> MatchFailed -- No tuple pattern
+  (PatCon _ _, VSig {})      -> error "impossible"
+  (PatCon _ _, VProj {})     -> MatchStuck BProj
   (PatCon c ps, VPathCons p args) -- Lean's lesson: large elim over prop level values should not be allowed. 
                                   -- But here is ok, because the only way to match a path constructor is using `apd`, which is in prop verse.
     | length ps == length args && c == eqNameDef p ->  fmap (PatCon c) (match env ps args)
-  (PatCon c ps, VPathCons p args) -> MatchFailed 
+  (PatCon c ps, VPathCons p args) -> MatchFailed
   (PatFunc f ps, VFunc f' args)
     | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match env ps args)
   (PatFunc f ps, VHold f' args _)
@@ -82,22 +86,23 @@ infixl 8 $$
 
 vApp :: HasGlobal => Val -> Val -> Icit -> Val
 vApp t u i = case force t of
-  VLam _ _ t  -> t $$ u
-  VFlex  m sp -> VFlex  m (sp :> (u, i))
-  VRigid x sp     -> VRigid x (sp :> (u, i))
+  VLam _ _ t     -> t $$ u
+  VFlex  m sp    -> VFlex  m (sp :> (u, i))
+  VRigid x sp    -> VRigid x (sp :> (u, i))
   -- env is used here,  when t is a meta solution, so that env = [], then t must be a closed term. so sp is empty too.
   VFunc f sp
     | length sp + 1 < arity f -> evalFun [] f (funcClauses f) (sp :> (force u, i))
-    | otherwise -> 
+    | otherwise ->
         let (rest, sp') = splitAt (length sp + 1 - arity f) (sp :> (force u,i)) in
           vAppSp (evalFun [] f (funcClauses f) sp') rest
-  VHold f sp m -> VHold f (sp :> (u,i)) m
-  VCons c sp -> VCons c (sp :> (u,i))
+  VHold f sp m   -> VHold f (sp :> (u,i)) m
+  VCons c sp     -> VCons c (sp :> (u,i))
   VPathCons c sp -> VPathCons c (sp :> (u, i))
-  VData d sp -> VData d (sp :> (u,i))
-  VPrim Cast vs -> VPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
-  VPrim p vs  -> VPrim p (vs :> (u, i))
-  t           -> error $ "IMPOSSIBLE: " ++ show t
+  VData d sp     -> VData d (sp :> (u,i))
+  VPrim Cast vs  -> VPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
+  VProj v x sp   -> VProj v x (sp :> (u, i))
+  VPrim p vs     -> VPrim p (vs :> (u, i))
+  t              -> error $ "IMPOSSIBLE: " ++ show t
 
 -- | Make sure `(length sp) <= arity f`
 evalFun :: HasGlobal => Env -> FuncDef -> [Clause] -> Spine -> Val
@@ -108,7 +113,7 @@ evalFun env f (c:cs) sp
       case match env (clausePatterns c) sp of
         MatchFailed          -> evalFun env f cs sp --Failed
         MatchStuck (BFlex m) -> VHold f sp (Just m)       -- Stucked by a meta
-        MatchStuck _         -> VHold f sp Nothing 
+        MatchStuck _         -> VHold f sp Nothing
         MatchSuc env'        -> eval env' (clauseRhs c) -- Succeeded
 
 -- Return Nothing if stucked or no matching clause
@@ -164,7 +169,17 @@ eval env = \case
   PropTm              -> VPropTm
   Prim Cast           -> VPrim Cast []
   Prim p              -> VPrim p []
-  Proj t x            -> VProj (eval env t) x []
+  Sig tys             -> VSig env tys
+  MkSig ts            -> VMkSig (map (second (eval env)) ts)
+  Proj t x            -> vProj (eval env t) x
+
+vProj :: HasGlobal => Val -> Name -> Val
+vProj (force -> VMkSig fs) x = go fs where
+  go [] = error "impossible"
+  go ((x', v):fs)
+    | x == x'   = v
+    | otherwise = go fs
+vProj v x = VProj v x []
 
 evalCxt :: HasGlobal => Cxt -> Tm -> Val
 evalCxt ctx = eval (env ctx)
@@ -174,6 +189,10 @@ force = \case
   VFlex m sp | Solved t <- lookupMeta m -> force (vAppSp t sp) -- t is in empty env
   VHold f sp (Just m)
     | Solved _ <- lookupMeta m -> vAppSp (VFunc f []) sp
+  VProj v x sp -> case force v of
+    VMkSig fs -> force (vAppSp (fromJust $ lookup x fs) sp)
+    VPropTm   -> VPropTm
+    v'        -> VProj v' x sp
   t -> t
 
 lvl2Ix :: Lvl -> Lvl -> Ix
@@ -204,7 +223,14 @@ quote l t = case force t of
   VProp        -> Prop
   VPropTm      -> PropTm
   VPrim p sp   -> quoteSp l (Prim p) sp
+  VSig env tys -> Sig $ quoteTele l env tys
+  VMkSig ts    -> MkSig $ map (second (quote l)) ts
   VProj v x sp -> quoteSp l (Proj (quote l v) x) sp
+
+quoteTele :: HasGlobal => Lvl -> Env -> [(Name, Ty)] -> [(Name, Ty)]
+quoteTele l env = \case
+  [] -> []
+  (x, t):ts -> (x, quote l (eval env t)) : quoteTele (l + 1) (VVar l : env) ts
 
 -- return the levels of bound variables introduced by the clause
 countVarPat :: Lvl -> Clause -> (Int, [Lvl])
@@ -246,8 +272,15 @@ fv dep = nub . \case
   VPrim _ sp -> fvSp dep sp
   VProp -> []
   VPropTm -> error "fv: impossible"
+  VSig env tys -> fvTele dep env tys
+  VMkSig ts -> concatMap (fv dep . snd) ts
   VProj v x sp -> fv dep v ++ fvSp dep sp
   -- fv is only used in PMunification case "x = t", if type of x is a prop, then x should be a prop term already.
+
+fvTele :: HasGlobal => Lvl -> Env -> [(Name, Ty)] -> [Lvl]
+fvTele dep env = \case
+  [] -> []
+  (x, t):ts -> fv dep (eval env t) ++ fvTele (dep + 1) (env :> VVar dep) ts
 
 
 -- dep is the old context depth, we will assign new levels to variables in pattern
@@ -261,7 +294,7 @@ p2v dep = fst . go1 dep where
       Just (DefCons c) ->
         let (l', r) = go l ps in
           (VCons c l', r)
-      Just (DefEq eq) -> 
+      Just (DefEq eq) ->
         let (l', r) = go l ps in
           (VPathCons eq l', r)
       _ -> error "p2v: impossible"

@@ -8,8 +8,8 @@ import qualified Data.Map as M
 type Env     = [Val]
 type Spine   = [(Val, Icit)]
 data Closure = Closure Env Tm deriving Show 
-type VTy     = Val
 
+type VTy     = Val
 data Val
   = VFlex MetaVar Spine
   | VRigid Lvl Spine
@@ -27,6 +27,9 @@ data Val
   | VProp 
   | VPropTm 
   | VPrim Prim Spine 
+
+  | VSig Env [(Name, Ty)] -- A closure
+  | VMkSig [(Name, Val)]
   | VProj Val Name Spine
   deriving Show 
 
@@ -57,3 +60,7 @@ eqCons2Defs EqCons{..} = EqConsDef
     goPi ((x, i, a):rest) t = Pi x i a (goPi rest t)
     mkEq :: Tm -> Tm -> TSpine -> Tm 
     mkEq lhs rhs sp = applySp (Prim Oeq) [(applySp (Call (dataName eqData)) sp, Impl), (lhs, Expl), (rhs, Expl)]
+
+sortV :: Sort -> VTy
+sortV SType = VType
+sortV SProp = VProp

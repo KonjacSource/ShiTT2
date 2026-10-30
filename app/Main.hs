@@ -268,8 +268,9 @@ testExamples :: IO ()
 testExamples = do
   putStrLn "Running tests..."
   putStrLn ">> Loading Example.shitt..."
-  loadFile "examples/Example.shitt" >> reset
-  loadFile "examples/stlc.shitt" >> reset
-  loadFile "examples/prf_irr.shitt" >> reset
-  loadFile "examples/qit_test.shitt" >> reset
+  loadFile "examples/Example.shitt"   >> reset
+  loadFile "examples/stlc.shitt"      >> reset
+  loadFile "examples/prf_irr.shitt"   >> reset
+  loadFile "examples/qit_test.shitt"  >> reset
   loadFile "examples/qiit_stlc.shitt" >> reset
+  loadFile "examples/sigma.shitt"     >> reset

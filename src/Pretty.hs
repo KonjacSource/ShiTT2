@@ -53,6 +53,10 @@ prettyTm prec = go prec where
     (ns :> n , bds :> Defined ) -> goBDS appp ns m bds
     _                           -> error "impossible"
 
+  sepBy :: String -> [ShowS] -> ShowS
+  sepBy _   []     = id
+  sepBy sep (s:ss) = s . foldr (\s' acc -> (sep++) . s' . acc) id ss
+
   go :: HasCallStack => Int -> [Name] -> Tm -> ShowS
   go p ns = \case
     Var (Ix x)   | x >= 0     -> ((ns !! x)++)
@@ -82,9 +86,15 @@ prettyTm prec = go prec where
     InsertedMeta m bds        -> goBDS p ns m bds
     Call f                    -> (f ++)
     Prop                      -> ("Prop"++)
-    PropTm                    -> ("..." ++)
+    PropTm                    -> (".." ++)
     Prim p                    -> (show p ++)
     Proj t x                  -> par p appp $ go appp ns t . ((" ."++x)++) 
+    Sig tys                   -> ("sig {"++) . goTele ns tys . ('}':) where
+                                   goTele ns []           = id
+                                   goTele ns [(x, a)]     = field ns x a
+                                   goTele ns ((x, a):tys) = field ns x a . ("; "++) . goTele (ns :> fresh ns x) tys
+                                   field ns x a = (x++) . (" : "++) . go letp ns a
+    MkSig ts                  -> ('<':) . sepBy ", " [ (x++) . (" := "++) . go letp ns t | (x, t) <- ts ] . ('>':)
 
 showTm0 :: Tm -> String
 showTm0 t = prettyTm 0 [] t []

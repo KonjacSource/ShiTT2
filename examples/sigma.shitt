@@ -1,0 +1,16 @@
+def etaSig : {A B : Type} (p : sig { x : A; y : B }) -> p ~ <p.x; p.y>
+  = \_. rfl _
+
+def curry   : {A B C : Type} -> (sig { x : A; y : B } -> C) -> A -> B -> C
+  = \f a b. f <a; b>
+def uncurry : {A B C : Type} -> (A -> B -> C) -> sig { x : A; y : B } -> C
+  = \g p. g p.x p.y
+
+def uncucurry : {A B C : Type} (f : sig { x : A; y : B } -> C) -> uncurry (curry f) ~ f
+  = \_. rfl _
+
+def castId : {A B : Type} (p : sig { x : A; y : B }) (e : sig { x : A; y : B } ~ sig { x : A; y : B })
+          -> cast e p ~ <p.x; p.y>
+  = \_ _. rfl _
+
+def g : (s : sig {A : U; a : A}) -> s.A = \ s. s.a

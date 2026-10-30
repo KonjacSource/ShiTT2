@@ -36,7 +36,8 @@ symbol s   = lexeme (C.string s)
 char c     = lexeme (C.char c)
 parens p   = char '(' *> p <* char ')'
 braces p   = char '{' *> p <* char '}'
-brackets p   = char '[' *> p <* char ']'
+brackets p = char '[' *> p <* char ']'
+tuple p    = char '<' *> p <* char '>' 
 pArrow     = symbol "→" <|> symbol "->"
 pBind      = pIdent <|> symbol "_"
 
@@ -47,7 +48,8 @@ kwList = [ "let",       "λ",      "U"
          , "begin",     "end",    "absurd"
          , "fun",       "match",  "with"
          , "quotient",  "cast",   "apd"
-         , "Prop",      "for",    "rfl"
+         , "Prop",      "Type",   "for"
+         , "rfl",       "sig"
          ]
 
 keyword :: String -> Bool
@@ -67,10 +69,18 @@ pKeyword kw = do
   C.string kw
   (takeWhile1P Nothing isAlphaNum *> empty) <|> ws
 
+-- | An atom followed by any number of projections: @t.x.y@
 pAtom :: Parser Tm
-pAtom  =
+pAtom = withPos $ do
+  t  <- pAtom'
+  xs <- many (try (C.char '.' *> pIdent))
+  pure $ foldl Proj t xs
+
+pAtom' :: Parser Tm
+pAtom'  =
       withPos (    (Var <$> pIdent)
-               <|> (U <$ char 'U')
+               <|> (U <$ pKeyword "U")
+               <|> (U <$ pKeyword "Type")
                <|> (Hole <$ char '_'))
   <|> parens pTm
   <|> (pKeyword "printcxt" >> brackets pTm >>= pure . PrintCxt)
@@ -79,6 +89,9 @@ pAtom  =
   <|> (pKeyword "cast" >> pure Cast)
   <|> (pKeyword "apd" >> pure Apd)
   <|> (pKeyword "rfl" >> pure Rfl)
+  <|> pSigTy
+  <|> try pSigTm
+  <|> pSigTm'
 
 pArg :: Parser (Either Name Icit, Tm)
 pArg =  (try $ braces $ do {x <- pIdent; char '='; t <- pTm; pure (Left x, t)})
@@ -118,9 +131,20 @@ pPi = do
   cod <- pTm
   pure $ foldr (\(xs, a, i) t -> foldr (\x -> Pi x i a) t xs) cod dom
 
+-- | @a ~{A} b@, @a ~ b@, or just a spine
+pOeqOrSpine :: Parser Tm
+pOeqOrSpine = do
+  lhs <- pSpine
+  optional (symbol "~") >>= \case
+    Nothing -> pure lhs
+    Just _  -> do
+      ty  <- optional (braces pTm)
+      rhs <- pSpine
+      pure $ Oeq (maybe Hole id ty) lhs rhs
+
 pFunOrSpine :: Parser Tm
 pFunOrSpine = do
-  sp <- pSpine
+  sp <- pOeqOrSpine
   optional pArrow >>= \case
     Nothing -> pure sp
     Just _  -> Pi "_" Expl sp <$> pTm
@@ -142,15 +166,39 @@ pAbsurd = do
   t <- pTm
   pure $ Absurd t
 
-pOeq :: Parser Tm 
-pOeq = do 
-  lhs <- pAtom
-  ty <- symbol "~" >> optional (braces pTm)
-  rhs <- pAtom
-  pure $ Oeq (maybe Hole id ty) lhs rhs
+pSigTy :: Parser Tm
+pSigTy = do
+  pKeyword "sig"
+  tys <- braces $ flip sepBy (char ';') $ do 
+    x <- pIdent
+    char ':'
+    t <- pTm
+    pure (x, t)
+  pure $ Sig tys
+
+pSigTm :: Parser Tm
+pSigTm = do
+  ts <- tuple $ flip sepBy (char ';') $ do 
+    x <- pIdent
+    symbol ":="
+    t <- pTm
+    pure (x, t)
+  pure $ MkSig ts
+
+pSigTm' :: Parser Tm
+pSigTm' = do
+  ts <- tuple $ flip sepBy (char ';') $ do 
+    t <- pTm
+    pure ("_", t)
+  pure $ MkSig ts
 
 pTm :: Parser Tm
-pTm = withPos (try pOeq <|> pLam <|> pLet <|> try pPi <|> pFunOrSpine <|> pAbsurd)
+pTm = withPos $
+  pLam        <|>
+  pLet        <|>
+  try pPi     <|>
+  pFunOrSpine <|>
+  pAbsurd
 
 pSrc :: Parser Tm
 pSrc = ws *> pTm <* eof
@@ -383,6 +431,5 @@ parseStringProgram fp src =
       throwIO TopLevelError
     Right t ->
       pure t
-
 
 

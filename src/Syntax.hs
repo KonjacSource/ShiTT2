@@ -53,37 +53,53 @@ data Tm
   | InsertedMeta MetaVar [BD]
 
   | Prop 
-  | PropTm -- A term of a proposition type
+  | PropTm -- ^ A term of a proposition type
   | Prim Prim
+
+  | Sig   [(Name, Ty)] 
+  -- ^ n-sigma type, sig {x : A; y : B x; z : C x y}
+  | MkSig [(Name, Tm)]
   | Proj Tm Name
   deriving Show
 
 data Prim 
   = Apd
-  -- apd {A : U} {B : A → U} {x y : A} : (f : (x : A) → B x) (h : x = y) → cast (B x) (B y) (apU B h) (f x) = f y 
+  -- apd {A : U} {B : A → U} {x y : A} : (f : (x : A) → B x) (h : x = y) → cast (B x) (B y) (apU B h) (f x) ~ f y 
   | Cast
   -- cast [A B : U] (p : A = B) (a : A) : B
   | Oeq
-  -- eq {A : U} (x y : A) : U
+  -- eq {A : U} (x y : A) : Prop
   | Rfl
   -- rfl {A : U} (x : A) : x ~{A} x
   deriving (Show, Eq)
 
 data Sort = SType | SProp deriving (Show, Eq)
 
+sort :: Sort -> Tm
+sort SType = Type
+sort SProp = Prop
+
+-- | Pick a field, return the telescope of previous fields and the type of the field
+fieldType :: [(Name, Ty)] -> Name -> Maybe ([(Name, Ty)], Ty)
+fieldType ts n = go [] n ts where 
+  go acc n [] = Nothing 
+  go acc n ((x, t):ts) 
+    | x == n = Just (reverse acc, t)
+    | otherwise = go ((x, t):acc) n ts
+
 imax :: Sort -> Sort -> Sort
 imax SType SType = SType
 imax SProp SType = SType
 imax _     SProp = SProp
 
-max1 :: Sort -> Sort -> Sort
-max1 SType SType = SType
-max1 SProp SType = SType
-max1 SType SProp = SType
-max1 SProp SProp = SProp
+umax1 :: Sort -> Sort -> Sort
+umax1 SType SType = SType
+umax1 SProp SType = SType
+umax1 SType SProp = SType
+umax1 SProp SProp = SProp
 
-max :: [Sort] -> Sort
-max = foldr max1 SProp
+umax :: [Sort] -> Sort
+umax = foldr umax1 SProp
 
 -- to control the type of cast
 -- cast (A B : U) (p : A = B) (a : A) : B
@@ -114,6 +130,8 @@ noMetas = \case
   Prop -> True
   PropTm -> True 
   Prim _ -> True
+  Sig tys -> all (noMetas . snd) tys
+  MkSig ts -> all (noMetas . snd) ts
   Proj t _ -> noMetas t
 
 

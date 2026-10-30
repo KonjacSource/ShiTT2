@@ -2,6 +2,7 @@
 module Presyntax where
 
 import Common
+import Control.Arrow
 
 data Tm
   = Var Name                       -- x
@@ -19,6 +20,9 @@ data Tm
   | Apd                            -- apd
   | Oeq Tm Tm Tm                   -- a ~{A} b, or a ~ b for a ~{_} b
   | Rfl                            -- rfl {A : U} (x : A) : x ~{A} x
+  | Sig [(Name, Tm)]               -- sig {x : A; y : B; ...}
+  | MkSig [(Name, Tm)]             -- {x := t; y := u; ...} or {t; u; ...}
+  | Proj Tm Name                   -- t.x
   deriving Show
 
 -- | Get rid of source positions, for better debug printing.
@@ -39,6 +43,9 @@ stripPos = \case
   Apd          -> Apd
   Rfl          -> Rfl
   Oeq a b c    -> Oeq (stripPos a) (stripPos b) (stripPos c)
+  Sig ts       -> Sig   $ map (second stripPos) ts  
+  MkSig ts     -> MkSig $ map (second stripPos) ts
+  Proj t x     -> Proj (stripPos t) x
 
 data RClause = RClause
   { clausePatternsR :: RPatterns

@@ -129,6 +129,10 @@ check cxt t a = case (t, force a) of
         mapM_ (putStrLn . showCxt) ctxs
         throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt t_ty)
       Nothing -> throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt t_ty)
+  
+  (R.MkSig ts, VSig env tys) -> do 
+    flds <- checkTele ts env tys
+    pure $ MkSig flds
 
   (R.Hole, a) ->
     freshMeta cxt
@@ -137,6 +141,17 @@ check cxt t a = case (t, force a) of
     (t, inferred) <- insert cxt $ infer cxt t
     unifyCatchTy cxt expected inferred
     pure t
+  where
+    checkTele :: [(Name, R.Tm)] -> Env -> [(Name, Ty)] -> IO [(Name, Tm)]
+    checkTele [] _ [] = pure []
+    checkTele ((x, t):ts) env ((x', a):tys) 
+      | x == "_" || x == x' = do 
+          t <- check cxt t (eval env a)
+          let vt = evalCxt cxt t
+          us <- checkTele ts (env :> vt) tys
+          pure $ (x', t):us
+    checkTele _ _ _ = throwIO $ Error cxt $ SigmaMismatch
+
 
 inferSort :: HasGlobal => Cxt -> R.Tm -> IO (Ty, Sort) 
 inferSort cxt t = case t of 
@@ -147,6 +162,13 @@ inferSort cxt t = case t of
     (a, at) <- inferSort cxt a
     (b, bt) <- inferSort (bind cxt x (evalCxt cxt a)) b
     pure (Pi x i a b, imax at bt)
+  R.Sig ts -> do { (ts, u) <- inferTele cxt ts; pure (Sig ts, u) } where
+              inferTele cxt [] = pure ([], SProp)
+              inferTele cxt ((x, t):ts) = do
+                (t, st) <- inferSort cxt t
+                (ts, st') <- inferTele (bind cxt x (evalCxt cxt t)) ts
+                pure ((x, t):ts, umax1 st st')
+    
   _ -> do 
     (t, ty) <- infer cxt t
     case force ty of 
@@ -222,9 +244,7 @@ infer cxt = \case
   R.Prop -> pure (Prop, VType)
   t@(R.Pi {}) -> do
     (t, sort) <- inferSort cxt t
-    case sort of
-      SType -> pure (t, VType)
-      SProp -> pure (t, VProp)
+    pure (t, sortV sort)
     
   R.Let x a t u -> do
     (a, _) <- inferSort cxt a
@@ -255,6 +275,27 @@ infer cxt = \case
     u <- check cxt u av
     v <- check cxt v av
     pure (applySp (Prim Oeq) [(a, Impl), (u, Expl), (v, Expl)], VProp)
+  t@(R.Sig ts) -> do 
+    (t', u) <- inferSort cxt t
+    pure (t', sortV u)
+  R.MkSig ts -> do -- infer as simple tuple
+    (ts, tys) <- inferFld 0 ts
+    pure (MkSig ts, VSig (env cxt) tys)
+  R.Proj t x -> do
+    (t, ty) <- infer cxt t
+    case U.getProjTy ty (eval (env cxt) t) x of 
+      Right vxty -> pure (Proj t x, vxty)
+      Left U.PEFieldNotFound -> throwIO $ Error cxt $ FieldNotFound x (quoteCxt cxt ty)
+      Left _ -> throwIO $ Error cxt $ NotASigma (quoteCxt cxt ty)
+      
+  where
+    inferFld :: Lvl -> [(Name, R.Tm)] -> IO ([(Name, Tm)], [(Name, Ty)])
+    inferFld i [] = pure ([], [])
+    inferFld i ((x, t):ts) = do
+      (t, ty) <- infer cxt t
+      (ts, tys) <- inferFld (i + 1) ts
+      let x' = if x == "_" then show i else x
+      pure ((x', t):ts, (x', quote (lvl cxt + i) ty):tys)
 
 --------------------------------
 -- Check the Pattern Matching --

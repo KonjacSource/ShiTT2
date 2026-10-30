@@ -31,6 +31,9 @@ data ElabError
   | LambdaCaseUnCover
   | TypeMismatch (Either String Tm) {-Exp-} Tm {-Act-} Tm
   | NotAType Tm
+  | SigmaMismatch
+  | FieldNotFound Name Tm
+  | NotASigma Tm
   deriving (Show, Exception)
 
 data DefElabError 
@@ -94,6 +97,12 @@ displayError file (Error cxt e) = do
           "  Term: " ++ showTm cxt t3
         NotAType t ->
           "Not a type: " ++ showTm cxt t
+        SigmaMismatch ->
+          "Sigma type mismatch"
+        FieldNotFound x t ->
+          "Field not found: " ++ x ++ " in type: " ++ showTm cxt t
+        NotASigma t ->
+          "Expected a sigma type, but got: " ++ showTm cxt t
 
   printf "%s:%d:%d:\n" path linum colnum
   printf "%s |\n"    lpad
