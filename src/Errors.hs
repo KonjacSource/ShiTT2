@@ -34,6 +34,7 @@ data ElabError
   | SigmaMismatch
   | FieldNotFound Name Tm
   | NotASigma Tm
+  | InferUnnamedField Tm
   deriving (Show, Exception)
 
 data DefElabError 
@@ -103,7 +104,9 @@ displayError file (Error cxt e) = do
           "Field not found: " ++ x ++ " in type: " ++ showTm cxt t
         NotASigma t ->
           "Expected a sigma type, but got: " ++ showTm cxt t
-
+        InferUnnamedField t ->
+          "Cannot infer type for unnamed field: " ++ showTm cxt t
+          
   printf "%s:%d:%d:\n" path linum colnum
   printf "%s |\n"    lpad
   printf "%s | %s\n" lnum (lines file !! (linum - 1))

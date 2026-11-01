@@ -168,7 +168,6 @@ inferSort cxt t = case t of
                 (t, st) <- inferSort cxt t
                 (ts, st') <- inferTele (bind cxt x (evalCxt cxt t)) ts
                 pure ((x, t):ts, umax1 st st')
-    
   _ -> do 
     (t, ty) <- infer cxt t
     case force ty of 
@@ -282,7 +281,7 @@ infer cxt = \case
     (ts, tys) <- inferFld 0 ts
     pure (MkSig ts, VSig (env cxt) tys)
   R.Proj t x -> do
-    (t, ty) <- infer cxt t
+    (t, ty) <- insert' cxt $ infer cxt t
     case U.getProjTy ty (eval (env cxt) t) x of 
       Right vxty -> pure (Proj t x, vxty)
       Left U.PEFieldNotFound -> throwIO $ Error cxt $ FieldNotFound x (quoteCxt cxt ty)
@@ -291,11 +290,11 @@ infer cxt = \case
   where
     inferFld :: Lvl -> [(Name, R.Tm)] -> IO ([(Name, Tm)], [(Name, Ty)])
     inferFld i [] = pure ([], [])
-    inferFld i ((x, t):ts) = do
-      (t, ty) <- infer cxt t
-      (ts, tys) <- inferFld (i + 1) ts
-      let x' = if x == "_" then show i else x
-      pure ((x', t):ts, (x', quote (lvl cxt + i) ty):tys)
+    inferFld i ((x, t):ts)  = do
+        (t, ty) <- infer cxt t
+        when (x == "_") $ throwIO $ Error cxt $ InferUnnamedField t
+        (ts, tys) <- inferFld (i + 1) ts
+        pure ((x, t):ts, (x, quote (lvl cxt + i) ty):tys)
 
 --------------------------------
 -- Check the Pattern Matching --

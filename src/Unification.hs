@@ -223,7 +223,7 @@ unify cxt@Cxt{..} t u ty = do
       | x == x' = do
         unifyTy cxt (eval env t) (eval env' t')
         unifyTele (bind cxt x (eval env t)) (VVar l : env) ts (VVar l : env') ts'
-      | otherwise = error "impossible"
+      | otherwise = throwIO UnifyError
     unifyTele _ _ _ _ _ = throwIO UnifyError
 
     unifySig :: [(Name, Val)] -> [(Name, Val)] -> Env -> [(Name, Ty)] -> IO ()

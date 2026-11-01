@@ -88,13 +88,13 @@ prettyTm prec = go prec where
     Prop                      -> ("Prop"++)
     PropTm                    -> (".." ++)
     Prim p                    -> (show p ++)
-    Proj t x                  -> par p appp $ go appp ns t . ((" ."++x)++) 
+    Proj t x                  -> par p atomp $ go atomp ns t . ((" ."++x)++) 
     Sig tys                   -> ("sig {"++) . goTele ns tys . ('}':) where
                                    goTele ns []           = id
                                    goTele ns [(x, a)]     = field ns x a
                                    goTele ns ((x, a):tys) = field ns x a . ("; "++) . goTele (ns :> fresh ns x) tys
                                    field ns x a = (x++) . (" : "++) . go letp ns a
-    MkSig ts                  -> ('<':) . sepBy ", " [ (x++) . (" := "++) . go letp ns t | (x, t) <- ts ] . ('>':)
+    MkSig ts                  -> ('<':) . sepBy "; " [ (x++) . (" := "++) . go letp ns t | (x, t) <- ts ] . ('>':)
 
 showTm0 :: Tm -> String
 showTm0 t = prettyTm 0 [] t []

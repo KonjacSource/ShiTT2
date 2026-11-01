@@ -78,10 +78,10 @@ pAtom = withPos $ do
 
 pAtom' :: Parser Tm
 pAtom'  =
-      withPos (    (Var <$> pIdent)
-               <|> (U <$ pKeyword "U")
-               <|> (U <$ pKeyword "Type")
-               <|> (Hole <$ char '_'))
+      withPos (    (Var  <$> pIdent)
+               <|> (U    <$  pKeyword "U")
+               <|> (U    <$  pKeyword "Type")
+               <|> (Hole <$  char '_'))
   <|> parens pTm
   <|> (pKeyword "printcxt" >> brackets pTm >>= pure . PrintCxt)
   <|> (pKeyword "sorry" >> pure (PrintCxt Hole))
@@ -413,9 +413,9 @@ pMutualBody = do
 pDef :: Parser (SourcePos, RDef)
 pDef = do 
   spos <- getSourcePos
-  def <- choice [try pApd >>= pure . RDefApd
-                , pFunc >>= pure . RDefFunc
-                , pData >>= pure . RDefData
+  def <- choice [try pApd      >>= pure . RDefApd
+                , pFunc        >>= pure . RDefFunc
+                , pData        >>= pure . RDefData
                 , pMutualBlock >>= pure . RDefMutual
                 ]
   pure (spos, def)
