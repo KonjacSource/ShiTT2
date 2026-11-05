@@ -4,8 +4,6 @@ import Common
 import Syntax
 import qualified Presyntax as R
 
-type Telescope = [(Name, Icit, Ty)]
-
 data Def
   = DefFunc FuncDef
   | DefData DataDef
@@ -27,7 +25,7 @@ data EqConsDef = EqConsDef
 
 data FuncDef = FuncDef
   { funcName :: Name
-  , funcType :: Ty -- ^ Type of the function
+  , funcType :: Type -- ^ Type of the function
   , funcClauses :: [Clause] 
   -- TODO: change this to a Defs lookup function, because this field might be out of date when we using interleaved functions
   } 
@@ -60,18 +58,20 @@ lookupCons (DataDef d _ cons _) c = go cons where
     | c' == c = pure (ts, ix)
     | otherwise = go rest
 
-getConsType :: DataDef -> Telescope -> TSpine -> Tm 
+-- We only have inductive types, not propositions, so it is always a type.
+-- TODO: Universe level
+getConsType :: DataDef -> Telescope -> TSpine -> Ty
 getConsType d [] ix = applySp (Call $ dataName d) ix
-getConsType d ((x, i, t):ts) ix = Pi x i t $ getConsType d ts ix 
+getConsType d ((x, i, t):ts) ix = Pi x i t $ mkType $ getConsType d ts ix 
 
-getPathConType :: DataDef -> Telescope -> TSpine -> Tm -> Tm -> Tm 
+getPathConType :: DataDef -> Telescope -> TSpine -> Tm -> Tm -> Ty
 getPathConType d [] ix lhs rhs = applySp (Prim Oeq) [(applySp (Call $ dataName d) ix, Impl), (lhs, Expl), (rhs, Expl)]
-getPathConType d ((x, i, t):ts) ix lhs rhs = Pi x i t $ getPathConType d ts ix lhs rhs
+getPathConType d ((x, i, t):ts) ix lhs rhs = Pi x i t $ mkProp $ getPathConType d ts ix lhs rhs
 
 dataType :: DataDef -> Ty 
 dataType d = go (dataIx d) where 
   go [] = Type 
-  go ((x,i,t):ts) = Pi x i t (go ts)
+  go ((x,i,t):ts) = Pi x i t (mkType $ go ts)
 
 class Arity f where 
   arity :: f -> Int 
@@ -134,11 +134,3 @@ data RDef
   | RDefMutual RMutalBlock
 
 type Program = [(SourcePos, RDef)]
-
-mkPi :: Telescope -> Ty -> Ty 
-mkPi [] t = t
-mkPi ((x, i, a):ts) t = Pi x i a (mkPi ts t)
-
-mkPi' :: Telescope' -> Ty -> Ty
-mkPi' [] t = t
-mkPi' ((x, a):ts) t = Pi x Expl a (mkPi' ts t)

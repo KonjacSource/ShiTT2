@@ -70,29 +70,30 @@ prettyTm prec = go prec where
                                    goLam ns t =
                                      (". "++) . go letp ns t
 
-    Type                         -> ("U"++)
-    Absurd t                  -> par p appp $ ("absurd "++) . go atomp ns t
-    Pi "_" Expl a b           -> par p pip $ go appp ns a . (" → "++) . go pip (ns:>"_") b
+    Absurd t                     -> par p appp $ ("absurd "++) . go atomp ns t
+    Pi "_" Expl (El a _) (El b _) -> par p pip $ go appp ns a . (" → "++) . go pip (ns:>"_") b
 
-    Pi (fresh ns -> x) i a b  -> par p pip $ piBind ns x i a . goPi (ns:>x) b where
-                                   goPi ns (Pi (fresh ns -> x) i a b)
+    Pi (fresh ns -> x) i (El a as) b -> par p pip $ piBind ns x i a . goPi (ns:>x) b where
+                                   goPi ns (El (Pi (fresh ns -> x) i (El a _) b) _)
                                      | x /= "_" = piBind ns x i a . goPi (ns:>x) b
-                                   goPi ns b = (" → "++) . go pip ns b
+                                   goPi ns (El b _) = (" → "++) . go pip ns b
 
-    Let (fresh ns -> x) a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp ns a
+    Let (fresh ns -> x) (El a _) t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp ns a
                                  . ("\n  = "++) . go letp ns t . (";\n\n"++) . go letp (ns:>x) u
 
     Meta m                    -> (("?"++show m)++)
     InsertedMeta m bds        -> goBDS p ns m bds
     Call f                    -> (f ++)
+    Type                      -> ("U"++)
     Prop                      -> ("Prop"++)
+    TmSort _                  -> ("Sort?"++) -- TODO
     PropTm                    -> (".." ++)
     Prim p                    -> (show p ++)
     Proj t x                  -> par p atomp $ go atomp ns t . ((" ."++x)++) 
     Sig tys                   -> ("sig {"++) . goTele ns tys . ('}':) where
                                    goTele ns []           = id
-                                   goTele ns [(x, a)]     = field ns x a
-                                   goTele ns ((x, a):tys) = field ns x a . ("; "++) . goTele (ns :> fresh ns x) tys
+                                   goTele ns [(x, El a _)]     = field ns x a
+                                   goTele ns ((x, El a _):tys) = field ns x a . ("; "++) . goTele (ns :> fresh ns x) tys
                                    field ns x a = (x++) . (" : "++) . go letp ns a
     MkSig ts                  -> ('<':) . sepBy "; " [ (x++) . (" := "++) . go letp ns t | (x, t) <- ts ] . ('>':)
 

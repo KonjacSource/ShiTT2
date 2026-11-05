@@ -45,7 +45,6 @@ match1 env pat val = case (pat, val) of
   (PatCon _ _, VHold f _ Nothing) -> MatchStuck (BFunc f)
   (PatCon _ _, VHold f _ (Just m)) -> MatchStuck (BFlex m)
   (PatCon _ _, VFlex m _)   -> MatchStuck (BFlex m)
-  (PatCon _ _, VType)       -> error "impossible"
   (PatCon _ _, VData _ _)   -> error "impossible"
   (PatCon _ _, VLam {})     -> error "impossible"
   (PatCon _ _, VPi {})      -> error "impossible"
@@ -54,7 +53,7 @@ match1 env pat val = case (pat, val) of
   (PatCon _ _, VPrim Apd _)  -> error "impossible"
   (PatCon _ _, VPrim Oeq _)  -> error "impossible"
   (PatCon _ _, VPrim Rfl _)  -> error "impossible"
-  (PatCon _ _, VProp)        -> error "impossible"
+  (PatCon _ _, VSort _)       -> error "impossible"
   (PatCon _ _, VMkSig ts)    -> MatchFailed -- No tuple pattern
   (PatCon _ _, VSig {})      -> error "impossible"
   (PatCon _ _, VProj {})     -> MatchStuck BProj
@@ -106,56 +105,74 @@ vApp t u i = case force t of
   t              -> error $ "IMPOSSIBLE: " ++ show t
 
 vOeq :: HasGlobal => Spine -> Val
-vOeq [(a, Impl), (t, Expl), (u, Expl)] = case (force a, force t, force u) of 
-  _ -> VPrim Oeq [(a, Impl), (t, Expl), (u, Expl)] -- TODO!!!
+vOeq ([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case (force a, force t, force u) of 
+  (a, t, u) -> VPrim Oeq ([]:>(a, Impl):>(t, Expl):>(u, Expl))
 vOeq vs = VPrim Oeq vs
 
 -- | Generating a sigma type, recording the equality between two telescopes.
--- | Δ1 = (x1 : A1) (x2 : A2[x1]) ... (xn : An[..])
--- | Δ2 = (x1 : B1) (x2 : B2[y1]) ... (xn : Bn[..])     -- field names must agree
+-- | Δ1 = (x_0 : A_0) (x_1 : A_1[x_0]) ... (x_(n-1) : A_(n-1)[x_<(n-1)])
+-- | Δ2 = (x_0 : B_0) (x_1 : B_1[x_0]) ... (x_(n-1) : B_(n-1)[x_<(n-1)])     -- field names must agree
 -- | we get
 --   sig
---   { x1 : A1 ~ B1
---   ; x2 : (x1 : A1) -> A2[x1] ~ B2[y1]
---   ; x3 : (x1 : A1) (x2 : A2[x1]) -> A3[x1, x2] ~ B3[y1, y2]
+--   { x_0 : A_0 ~{s_0} B_0
+--   ; x_1 : (x_0 : A_0) -> A_1[x_0] ~{s_1} B_1[y_0]
+--   ; x_2 : (x_0 : A_0) (x_1 : A_1[x_0]) -> A_2[x_0, x_1] ~{s_2} B_2[y_0, y_1]
 --   ...}
---   where y1 = cast [A1 ~> B1] .. x1,  y2 = cast [A2[x1] ~> B2[y1]] .. x2, ...
+--   where s_j is the sort of both A_j and B_j, f_j is the j-th field of this sig, and
+--     y_j = cast {A_j[x_<j]} {B_j[y_<j]} (f_j x_<j) x_j   if s_j = Type
+--     y_j = ..                                              if s_j = Prop  (cast for prop is postulated)
+--   Each y_j is bound once by a `let` in front of the equation, so the field types stay linear in size.
+-- | Nothing if it does not reduce: the field names differ, or some field sorts are not solved yet or differ.
 oeqTeleTy :: HasGlobal => (Env, Telescope') -> (Env, Telescope') -> Maybe VTy
 oeqTeleTy (envA, as) (envB, bs)
-  | fieldNames == map fst bs = Just $ VSig famEnv [ (x, eqField k) | (k, x) <- zip [0 ..] fieldNames ]
-  | otherwise                = Nothing
+  | fieldNames == map fst bs
+  , and [ known s && s == s' | (s, s') <- fieldSorts ] = Just $ VSig famEnv [ (x, eqField k) | (k, x) <- zip [0 ..] fieldNames ]
+  | otherwise = Nothing
   where
     n          = length as
     fieldNames = map fst as
+    -- the sorts of the j-th fields of Δ1 and Δ2
+    fieldSorts = zipWith (\(_, a) (_, b) -> (force (getSort a), force (getSort b))) as bs
+    -- TODO: If there is meta in s, we may get a stucked result, and would not be able to re-compute when the meta is solved. 
+    known s    = s == SType || s == SProp
+    -- s_j, only used when all the field sorts are known and agree
+    fieldSort j = fst (fieldSorts !! j)
     -- env ⊢ tys  ==>  env ⊢ λ x_0 .. x_(j-1). A_j  (the j-th field type as a function of the previous fields)
     fieldFamily :: Env -> Telescope' -> Int -> Val
-    fieldFamily env tys j = eval env $ foldr (\x -> Lam x Expl) (snd (tys !! j)) (map fst (take j tys))
+    fieldFamily env tys j = eval env $ foldr (\x -> Lam x Expl) (unEl (snd (tys !! j))) (map fst (take j tys))
     -- Θ; G_j has local level j, H_j has local level n + j
     famEnv = reverse $ [ fieldFamily envA as j | j <- [0 .. n - 1] ]
                     ++ [ fieldFamily envB bs j | j <- [0 .. n - 1] ]
     -- At depth `depth`, the variable of local level `l`
+    varAt :: Int -> Int -> Tm
     varAt depth l = Var (Ix (depth - l - 1))
-    -- At depth `depth`: G_j args = A_j[args],  H_j args = B_j[args]
-    fieldTyA, fieldTyB :: Int -> Int -> [Tm] -> Tm
-    fieldTyA depth j args = applySp (varAt depth j)       [ (t, Expl) | t <- args ]
-    fieldTyB depth j args = applySp (varAt depth (n + j)) [ (t, Expl) | t <- args ]
 
-    mkOeqTy a b = applySp (Prim Oeq) [(Type, Impl), (a, Expl), (b, Expl)]
-    mkCast a b t = applySp (Prim Cast) [(a, casticit), (b, casticit), (PropTm, Expl), (t, Expl)]
+    mkOeq s a b = applySp (Prim Oeq) [(TmSort s, Impl), (a, Expl), (b, Expl)]
 
     -- Θ, f_0 .. f_(k-1) ⊢ eqField k
-    --   = (x_0 : A_0) .. (x_(k-1) : A_(k-1)[x_<(k-1)]) -> A_k[xs] ~ B_k[ys]
-    eqField k = bindPrefix (2 * n + k) [] where
-      bindPrefix :: Int -> [Int] -> Tm
-      bindPrefix depth xLvls
-        | j == k    = mkOeqTy (fieldTyA depth k xs) (fieldTyB depth k (castForward depth xs))
-        | otherwise = Pi (fieldNames !! j) Expl (fieldTyA depth j xs) (bindPrefix (depth + 1) (xLvls ++ [depth]))
-        where j  = length xLvls
-              xs = map (varAt depth) xLvls
-    -- Θ, f_<k, x_<k ⊢ castForward depth xs = ys,  depth = 2n + 2k
-    --   y_j = cast [A_j[x_<j] ~> B_j[y_<j]] .. x_j
-    castForward depth xs = foldl step [] (zip [0 ..] xs) where
-      step ys (j, x) = ys ++ [mkCast (fieldTyA depth j (take j xs)) (fieldTyB depth j ys) x]
+    --   = (x_0 : A_0) .. (x_(k-1) : A_(k-1)[x_<(k-1)]) -> let y_0 = ..; ..; let y_(k-1) = ..; A_k[x_<k] ~{s_k} B_k[y_<k]
+    -- Local levels: G_j = j, H_j = n + j, f_j = 2n + j, x_j = 2n + k + j, y_j = 2n + 2k + j
+    eqField :: Int -> Type
+    eqField k = mkPiE [ (fieldNames !! j, El (tyA (lvlX j) j) (fieldSort j)) | j <- [0 .. k - 1] ]
+                      (El (letYs 0) SProp)
+      where
+        lvlF j = 2 * n + j
+        lvlX j = 2 * n + k + j
+        lvlY j = 2 * n + 2 * k + j
+        -- At depth d:  G_j x_<j = A_j[x_<j],  H_j y_<j = B_j[y_<j],  f_j x_<j : A_j[x_<j] ~ B_j[y_<j]
+        tyA   d j = applySp (varAt d j)        [ (varAt d (lvlX i), Expl) | i <- [0 .. j - 1] ]
+        tyB   d j = applySp (varAt d (n + j))  [ (varAt d (lvlY i), Expl) | i <- [0 .. j - 1] ]
+        proof d j = applySp (varAt d (lvlF j)) [ (varAt d (lvlX i), Expl) | i <- [0 .. j - 1] ]
+        -- Θ, f_<k, x_<k, y_<j ⊢ letYs j   (at depth lvlY j)
+        letYs j
+          | j == k    = mkOeq (fieldSort k) (tyA d k) (tyB d k)
+          | otherwise = Let (fieldNames !! j ++ "'") (El (tyB d j) (fieldSort j)) (castX d j) (letYs (j + 1))
+          where d = lvlY j
+        -- At depth d: y_j
+        castX d j
+          | fieldSort j == SProp = PropTm
+          | otherwise            = applySp (Prim Cast) [ (tyA d j, casticit), (tyB d j, casticit)
+                                                       , (proof d j, Expl), (varAt d (lvlX j), Expl) ]
 
 
 wkTm :: HasGlobal => Env -> Lvl -> Lvl -> Tm -> Tm
@@ -202,33 +219,38 @@ vAppBDs env ~v bds = case (env, bds) of
   (env :> t , bds :> Defined) -> vAppBDs env v bds
   _                           -> error "impossible"
 
--- TODO: adding rules for `f xxx (cast xx)`, as in cubical agda
-eval :: HasGlobal => Env -> Tm -> Val
-eval env = \case
-  Var x               -> env !! unIx x
-  App t u i           -> vApp (eval env t) (eval env u) i
-  Lam x i t           -> VLam x i (Closure env t)
-  Pi x i a b          -> VPi x i (eval env a) (Closure env b)
-  Let _ _ t u         -> eval (env :> eval env t) u
-  Type                   -> VType
-  Absurd t            -> VAbsurd (eval env t)
-  Meta m              -> vMeta env m
-  InsertedMeta m bds  -> vAppBDs env (vMeta env m) bds
-  Call f              -> case M.lookup f ?defs of
-                          Just (DefFunc f)
-                            | arity f == 0 && not (null $ funcClauses f) -> eval env (clauseRhs (head (funcClauses f))) -- eval 0-arity function
-                            | otherwise -> VFunc f []
-                          Just (DefData d) -> VData d []
-                          Just (DefEq  eq) -> VPathCons eq []
-                          Just (DefCons c) -> VCons c []
-                          Nothing -> error $ "eval: impossible " ++ show f
-  Prop                -> VProp
-  PropTm              -> VPropTm
-  Prim Cast           -> VPrim Cast []
-  Prim p              -> VPrim p []
-  Sig tys             -> VSig env tys
-  MkSig ts            -> VMkSig (map (second (eval env)) ts)
-  Proj t x            -> vProj (eval env t) x
+class Eval a b | a -> b where 
+  eval :: HasGlobal => Env -> a -> b
+
+instance Eval Tm Val where 
+  -- TODO: adding rules for `f xxx (cast xx)`, as in cubical agda
+  eval env = \case
+    Var x               -> env !! unIx x
+    App t u i           -> vApp (eval env t) (eval env u) i
+    Lam x i t           -> VLam x i (Closure env t)
+    Pi x i a b          -> VPi x i (eval env a) (Closure env $ unEl b) (getSort b)
+    Let _ _ t u         -> eval (env :> eval env t) u
+    Absurd t            -> VAbsurd (eval env t)
+    Meta m              -> vMeta env m
+    InsertedMeta m bds  -> vAppBDs env (vMeta env m) bds
+    Call f              -> case M.lookup f ?defs of
+                            Just (DefFunc f)
+                              | arity f == 0 && not (null $ funcClauses f) -> eval env (clauseRhs (head (funcClauses f))) -- eval 0-arity function
+                              | otherwise -> VFunc f []
+                            Just (DefData d) -> VData d []
+                            Just (DefEq  eq) -> VPathCons eq []
+                            Just (DefCons c) -> VCons c []
+                            Nothing -> error $ "eval: impossible " ++ show f
+    TmSort s            -> VSort s
+    PropTm              -> VPropTm
+    Prim Cast           -> VPrim Cast []
+    Prim p              -> VPrim p []
+    Sig tys             -> VSig env tys
+    MkSig ts            -> VMkSig (map (second (eval env)) ts)
+    Proj t x            -> vProj (eval env t) x
+
+instance Eval Type VType where 
+  eval env (El t s) = VEl (eval env t) s
 
 vProj :: HasGlobal => Val -> Name -> Val
 vProj (force -> VMkSig fs) x = go fs where
@@ -238,19 +260,25 @@ vProj (force -> VMkSig fs) x = go fs where
     | otherwise = go fs
 vProj v x = VProj v x []
 
-evalCxt :: HasGlobal => Cxt -> Tm -> Val
+evalCxt :: (HasGlobal, Eval a b) => Cxt -> a -> b
 evalCxt ctx = eval (env ctx)
 
-force :: HasGlobal => Val -> Val
-force = \case
-  VFlex m sp | Solved t <- lookupMeta m -> force (vAppSp t sp) -- t is in empty env
-  VHold f sp (Just m)
-    | Solved _ <- lookupMeta m -> vAppSp (VFunc f []) sp
-  VProj v x sp -> case force v of
-    VMkSig fs -> force (vAppSp (fromJust $ lookup x fs) sp)
-    VPropTm   -> VPropTm
-    v'        -> VProj v' x sp
-  t -> t
+class Force c a | a -> c where 
+  force :: c => a -> a
+
+instance Force HasGlobal Val where
+  force = \case
+    VFlex m sp | Solved t <- lookupMeta m -> force (vAppSp t sp) -- t is in empty env
+    VHold f sp (Just m)
+      | Solved _ <- lookupMeta m -> vAppSp (VFunc f []) sp
+    VProj v x sp -> case force v of
+      VMkSig fs -> force (vAppSp (fromJust $ lookup x fs) sp)
+      VPropTm   -> VPropTm
+      v'        -> VProj v' x sp
+    t -> t
+  
+instance Force HasGlobal VType where 
+  force (VEl t s) = VEl (force t) (force s)
 
 lvl2Ix :: Lvl -> Lvl -> Ix
 lvl2Ix (Lvl l) (Lvl x) = Ix (l - x - 1)
@@ -263,26 +291,31 @@ quoteSp l t = \case
   []           -> t
   sp :> (u, i) -> App (quoteSp l t sp) (quote l u) i
 
-quote :: HasGlobal => Lvl -> Val -> Tm
-quote l t = case force t of
-  VFlex m sp -> quoteSp l (Meta m) sp
-  VRigid x sp  -> quoteSp l (Var (lvl2Ix l x)) sp
-  VLam x i t   -> Lam x i (quote (l + 1) (t $$ VVar l))
-  VPi x i a b  -> Pi x i (quote l a) (quote (l + 1) (b $$ VVar l))
-  VType        -> Type
-  VAbsurd v    -> Absurd (quote l v)
+class Quote a b | a -> b where 
+  quote :: HasGlobal => Lvl -> a -> b
 
-  VCons c sp   -> quoteSp l (Call (consName c)) sp
-  VFunc f sp   -> quoteSp l (Call (funcName f)) sp
-  VHold f sp _ -> quoteSp l (Call (funcName f)) sp
-  VData d sp   -> quoteSp l (Call (dataName d)) sp
-  VPathCons f sp -> quoteSp l (Call (eqNameDef f)) sp
-  VProp        -> Prop
-  VPropTm      -> PropTm
-  VPrim p sp   -> quoteSp l (Prim p) sp
-  VSig env tys -> Sig $ quoteTele l env tys
-  VMkSig ts    -> MkSig $ map (second (quote l)) ts
-  VProj v x sp -> quoteSp l (Proj (quote l v) x) sp
+instance Quote Val Tm where
+  quote l t = case force t of
+    VFlex m sp -> quoteSp l (Meta m) sp
+    VRigid x sp  -> quoteSp l (Var (lvl2Ix l x)) sp
+    VLam x i t   -> Lam x i (quote (l + 1) (t $$ VVar l))
+    VPi x i a b bs -> Pi x i (quote l a) (El (quote (l + 1) (b $$ VVar l)) bs)
+    VAbsurd v    -> Absurd (quote l v)
+
+    VCons c sp   -> quoteSp l (Call (consName c)) sp
+    VFunc f sp   -> quoteSp l (Call (funcName f)) sp
+    VHold f sp _ -> quoteSp l (Call (funcName f)) sp
+    VData d sp   -> quoteSp l (Call (dataName d)) sp
+    VPathCons f sp -> quoteSp l (Call (eqNameDef f)) sp
+    VSort s      -> TmSort s
+    VPropTm      -> PropTm
+    VPrim p sp   -> quoteSp l (Prim p) sp
+    VSig env tys -> Sig $ quoteTele l env tys
+    VMkSig ts    -> MkSig $ map (second (quote l)) ts
+    VProj v x sp -> quoteSp l (Proj (quote l v) x) sp
+
+instance Quote VType Type where
+  quote l (VEl t s) = El (quote l t) s
 
 quoteTele :: HasGlobal => Lvl -> Env -> Telescope' -> Telescope'
 quoteTele l env = \case
@@ -306,8 +339,14 @@ countVarPat (Lvl l) (Clause ps _) = (cnt ps, make (cnt ps)) where
 quoteCxt :: HasGlobal => Cxt -> Val -> Tm
 quoteCxt cxt = quote (lvl cxt)
 
-nf :: HasGlobal => Env -> Tm -> Tm
-nf env t = quote (Lvl (length env)) (eval env t)
+class Nf a where 
+  nf :: HasGlobal => Env -> a -> a
+
+instance Nf Tm  where
+  nf env t = quote (Lvl (length env)) (eval env t)
+
+instance Nf Type where 
+  nf env t = quote (Lvl (length env)) (eval env t)
 
 fvSp :: HasGlobal => Lvl -> Spine -> [Lvl]
 fvSp dep = \case
@@ -319,16 +358,15 @@ fv dep = nub . \case
   VFlex _ sp -> fvSp dep sp
   VRigid l sp -> l : fvSp dep sp
   VLam x _ b -> filter (< dep) $ fv (dep + 1) (b $$ VVar dep)
-  VPi x _ t b -> fv dep t ++ filter (< dep) (fv (dep + 1) (b $$ VVar dep))
+  VPi x _ (VEl t _) b bs -> fv dep t ++ filter (< dep) (fv (dep + 1) (b $$ VVar dep))
   VAbsurd v -> fv dep v
   VCons _ sp -> fvSp dep sp
   VFunc _ sp -> fvSp dep sp
   VHold _ sp _-> fvSp dep sp
   VData _ sp -> fvSp dep sp
   VPathCons _ sp -> fvSp dep sp
-  VType -> []
   VPrim _ sp -> fvSp dep sp
-  VProp -> []
+  VSort _ -> []
   VPropTm -> error "fv: impossible"
   VSig env tys -> fvTele dep env tys
   VMkSig ts -> concatMap (fv dep . snd) ts
@@ -338,7 +376,7 @@ fv dep = nub . \case
 fvTele :: HasGlobal => Lvl -> Env -> Telescope' -> [Lvl]
 fvTele dep env = \case
   [] -> []
-  (x, t):ts -> fv dep (eval env t) ++ fvTele (dep + 1) (env :> VVar dep) ts
+  (x, t):ts -> fv dep (unVEl $ eval env t) ++ fvTele (dep + 1) (env :> VVar dep) ts
 
 
 -- dep is the old context depth, we will assign new levels to variables in pattern
@@ -377,6 +415,54 @@ updateSp ctx = \case
   []           -> []
   sp :> (v, i) -> updateSp ctx sp :> (updateVal ctx v, i)
 
-varr :: HasGlobal => Cxt -> VTy -> VTy -> VTy
-varr ctx a b = VPi "_" Expl a (Closure (env ctx) $ quote (lvl ctx + 1) b)
+instance Force () Sort where 
+  force = \case 
+    SMeta m | SSolved s <- lookupSMeta m -> s
+            | otherwise -> SMeta m
+    IMax s s' -> imax (force s) (force s')
+    UMax ss   -> umax (map force ss)
+    SType -> SType
+    SProp -> SProp
+    Suc s -> suc s
 
+suc :: Sort -> Sort
+suc s = case force s of
+  SType -> SType
+  SProp -> SType
+  s     -> Suc s
+
+imax :: Sort -> Sort -> Sort
+imax a b = case (force a, force b) of
+  (SType, SType) -> SType
+  (SProp, SType) -> SType
+  (_    , SProp) -> SProp
+  (s    , s'   ) -> IMax s s'
+
+umax1 :: Sort -> Sort -> Sort
+umax1 a b = case (force a, force b) of
+  (SType, SType) -> SType
+  (SProp, SType) -> SType
+  (SType, SProp) -> SType
+  (SProp, SProp) -> SProp
+  (UMax ss, s) -> UMax (s:ss)
+  (s, UMax ss) -> UMax (s:ss)
+  (s    , s'   ) -> UMax [s, s']
+
+umax :: [Sort] -> Sort
+umax = foldr umax1 SProp
+
+mkPi :: Telescope -> Type -> Type
+mkPi [] t = t
+mkPi ((x, i, a):ts) t = El (Pi x i a (El b bs)) s where
+  El b bs = mkPi ts t
+  s = imax (getSort a) bs
+  
+mkPiE :: Telescope' -> Type -> Type
+mkPiE ts = mkPi [(x, Expl, a) | (x, a) <- ts]
+
+instance SortOf Telescope' where
+  sortOf [] = SProp
+  sortOf ((_, t):ts) = umax1 (sortOf t) (sortOf ts)
+
+instance SortOf Sort where 
+  sortOf = suc

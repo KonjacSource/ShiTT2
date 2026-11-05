@@ -27,7 +27,7 @@ newtype Ix  = Ix {unIx :: Int} deriving (Eq, Show, Num) via Int
 newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Ord, Show, Num) via Int
 
 newtype MetaVar = MetaVar {unMetaVar :: Int} deriving (Eq, Show, Num) via Int
-
+newtype SMetaVar = SMetaVar {unSMetaVar :: Int} deriving (Eq, Show, Num) via Int
 -- Snoc
 --------------------------------------------------------------------------------
 

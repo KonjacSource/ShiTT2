@@ -28,7 +28,7 @@ import Data.Bifunctor
 
 checkFunc1 :: HasGlobal => Cxt -> RFuncDef -> IO FuncDef
 checkFunc1 ctx (RFuncDef func_name func_typ cls) = do
-  (func_typ', _) <- E.inferSort ctx func_typ -- TODO: typed meta, use this info
+  func_typ' <- E.inferSort ctx func_typ -- TODO: typed meta, use this info
   let func_typ'' = nf (env ctx) func_typ'
   unless (noMetas func_typ'') $ do
     throwIO $ DefError ctx $ UnsolvedMetaInFuncDef func_name
@@ -54,7 +54,7 @@ checkFunc ctx rfun = do
   pure fun
 
 unfoldPi :: Tm -> (Telescope, Tm)
-unfoldPi (Pi x i t b) = first ((:) (x, i, t)) (unfoldPi b)
+unfoldPi (Pi x i t b) = first ((:) (x, i, t)) (unfoldPi $ unEl b)
 unfoldPi b = ([], b)
 
 
@@ -65,7 +65,7 @@ insertData defs dat = M.insert (dataName dat) (DefData dat) defs
 
 checkData :: SourcePos -> Defs -> QITInfo -> RDataDef -> IO (Defs, QITInfo)
 checkData s defs qiti rdat = withGlobal defs qiti $ do
-    ix_ty <- withGlobal defs qiti (E.check (emptyCxt s) (dataIxR rdat) VType) >>= checkIx . nf []
+    ix_ty <- withGlobal defs qiti (E.check (emptyCxt s) (dataIxR rdat) (VEl VType SType)) >>= checkIx . nf []
     -- (snd -> ix_ty) <- checkTelescope  ()
     let dat_head = DataDef (dataNameR rdat) ix_ty [] (isQITR rdat)
     let defs' = insertData defs dat_head
@@ -82,8 +82,8 @@ checkConss :: SourcePos -> Defs -> QITInfo -> DataDef -> [(Name, R.Tm)] -> IO (D
 checkConss s defs qiti dat = \case
   [] -> pure (defs, qiti)
   (c, t) : rest -> withGlobal defs qiti $ do
-    t' <- nf [] . fst <$> E.inferSort (emptyCxt s) t
-    cons <- checkCons s defs dat (c, t')
+    t' <- nf [] <$> E.inferSort (emptyCxt s) t
+    cons <- checkCons s defs dat (c, unEl t')
     case cons of
       Left (c, ts, ix) -> do
         let dat' = dat {dataCons = dataCons dat ++ [(c, ts, ix)]}
@@ -123,19 +123,11 @@ checkCons s defs dat (c, ty) = do
     goApp (Prim Oeq) = Just (True, [])
     goApp _ = Nothing
 
--- checkCons_ :: SourcePos -> Name -> Defs -> Telescope -> Name -> Tm -> IO (Name, Telescope, TSpine)
--- checkCons_ s datName defs ix_ty c ty = do
---   case go ty of
---     Nothing -> throwIO $ DefError ((emptyCxt s) {defs = defs}) $ ConstructorMustReturnData c
---     Just (ts, ret_ix) -> pure (c, ts, ret_ix)
-
 getConstructors :: DataDef -> [(Name, ConsDef)]
 getConstructors dat = map go (dataCons dat) where
-
-  go (c, ts, ix) = (c, ConsDef c dat (go1 ts (applySp (Call (dataName dat)) ix)))
-
-  go1 [] c = c
-  go1 ((x, i, t):xs) c = Pi x i t $ go1 xs c
+  go (c, ts, ix) = (c, ConsDef c dat (unEl $ go1 ts (applySp (Call (dataName dat)) ix)))
+  go1 [] c = El c SType
+  go1 ((x, i, t):xs) c = mkType $ Pi x i t $ go1 xs c
 
 checkProg' :: HasCallStack => Defs -> QITInfo -> Program -> IO (Defs, QITInfo)
 checkProg' defs qiti [] = do
@@ -202,37 +194,38 @@ checkApdCls srcpos defs qiti f (RApdClause (R.RPat f' ps) pxye rhs)
     (ps', cxt', rty) <- E.checkPat False cxt ps vty
     -- Maybe I should check if the pattern given by user is in the canidate patterns of the function.
     -- But seems not necessary
-    case force rty of
-      VPi x Expl a@(VData d sp) b | isQIT d  -> do
+    case unVEl $ force rty of
+      VPi x Expl a@(VEl (VData d sp) _) b bsort | isQIT d  -> do
         -- make the type of ... {x} {y} e = rhs, and then check pattern
         -- {x : a} {y : a} (e : x ~{a} y) -> cast [b x] [b y] (apd {A} {λ _ → U} {x} {y} B e) (f ps x) ~{b y} f ps y
         let x = lvl cxt'
         let y = x + 1
         let e = y + 1
-        let bx = b $$ VVar x
-        let by = b $$ VVar y
-        let et = vAppSp (VPrim Oeq []) ([] :> (a, Impl) :> (VVar x, Expl) :> (VVar y, Expl))
-        let fps = PatFunc (funcName f) ps'
-        let fpsv = p2v (lvl cxt) fps
-        let lhs_eq = vAppSp (VPrim Cast [])
+        let bx = b $$ VVar x -- b x
+        let by = b $$ VVar y -- b y
+        let et = vAppSp (VPrim Oeq []) ([] :> (unVEl a, Impl) :> (VVar x, Expl) :> (VVar y, Expl)) -- x ~{a} y
+        let fps = PatFunc (funcName f) ps' -- f ps 
+        let fpsv = p2v (lvl cxt) fps       -- f ps
+        let lhs_eq = vAppSp (VPrim Cast []) -- cast [b x] [b y] (apd B e) (f ps x)
                     ([] :> (bx, casticit) :> (by, casticit)
                         :> (vAppSp (VPrim Apd []) -- This part is proof-irrelevant actually.
-                              ([] :> (a, Impl) :> (VLam "_" Expl (Closure [] Type), Impl)
+                              ([] :> (unVEl $ a, Impl) :> (VLam "_" Expl (Closure [] Type), Impl)
                                   :> (VVar x, Impl) :> (VVar y, Impl)
                                   :> (VLam "x" Expl b, Expl) :> (VVar e, Expl))
                           , Expl)
                         :> (vApp fpsv (VVar x) Expl, Expl))
-        let rhs_eq = vApp fpsv (VVar y) Expl
-        let rhs_ty = vAppSp (VPrim Oeq []) ([] :> (by, Impl) :> (lhs_eq, Expl) :> (rhs_eq, Expl))
+        let rhs_eq = vApp fpsv (VVar y) Expl -- f ps y
+        -- rhs of clause, not the rhs of the equation
+        let rhs_ty = vAppSp (VPrim Oeq []) ([] :> (by, Impl) :> (lhs_eq, Expl) :> (rhs_eq, Expl)) -- lhs_eq ~{b y} rhs_eq : Prop
         let xenv = x
         let yenv =  xenv + 1
         let eenv = yenv + 1
         let rhsenv = eenv + 1
-        let rhs_tyQ = quote rhsenv rhs_ty
-        let pie = Pi "e" Expl (quote eenv et) rhs_tyQ
-        let piy = Pi "y" Impl (quote yenv a) pie
-        let pix = Pi "x" Impl (quote xenv a) piy
-        (pxye', cxt'', rhs_ty') <- E.checkPat False cxt' pxye (evalCxt cxt' pix)
+        let rhs_tyQ = El (quote rhsenv rhs_ty) SProp
+        let pie = Pi "e" Expl (El (quote eenv et) SProp) rhs_tyQ
+        let piy = Pi "y" Impl (quote yenv a) (mkProp pie)
+        let pix = Pi "x" Impl (quote xenv a) (mkProp piy)
+        (pxye', cxt'', rhs_ty') <- E.checkPat False cxt' pxye (evalCxt cxt' (mkProp pix))
         rhs <- E.check cxt'' rhs rhs_ty' -- it is a proof-irrelevant term
         let fpsxye = (fps, Expl) : pxye'
         let qiti' = insertApd (funcName f) fpsxye (Clause fpsxye rhs) qiti
@@ -257,8 +250,8 @@ addCons srcpos (defs, qiti) name =
       (c, t) : cs -> do
         let ?defs = defs
         let ?qitInfo = qiti
-        t' <- nf [] . fst <$> E.inferSort (emptyCxt srcpos) t
-        cons <- checkCons srcpos defs d (c, t')
+        t' <- nf []  <$> E.inferSort (emptyCxt srcpos) t
+        cons <- checkCons srcpos defs d (c, unEl t')
         case cons of
           Left cons -> do
             let d' = d {dataCons = dataCons d ++ [cons]}
@@ -356,5 +349,5 @@ checkFuncCover' :: SourcePos -> Defs -> QITInfo -> Name -> Either E.CoverCheckin
 checkFuncCover' srcpos defs qiti fname = withGlobal defs qiti $ do
     case M.lookup fname defs of
       Just (DefFunc f@(FuncDef _ fty (map clausePatterns -> ps))) -> do
-        E.checkCover True (emptyCxt srcpos) f (eval [] fty) (arity f) ps
+        E.checkCover True (emptyCxt srcpos) f (unVEl $ eval [] fty) (arity f) ps
       _ -> error " impossible"

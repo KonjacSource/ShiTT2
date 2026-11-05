@@ -1,5 +1,5 @@
-def F : (P : Prop) (p q : P) -> Id p q 
-| P p q = refl _
+data PId : {P : Prop} (p q : P) -> Type where 
+| reflP : {P : Prop} (p : P) -> PId p p
 
-def f : (P : Prop) (p q : P) -> p ~ q
-| P p q = rfl _
+def F : {P : Prop} (p q : P) -> PId p q
+| p q = reflP p

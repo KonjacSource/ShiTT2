@@ -38,54 +38,67 @@ freshMeta cxt = do
   modifyIORef' mcxt $ IM.insert m Unsolved
   pure $ InsertedMeta (MetaVar m) (bds cxt)
 
-unifyCatch :: HasGlobal => Cxt -> Val -> Val -> VTy -> IO ()
+freshSMeta :: IO Sort 
+freshSMeta = do 
+  m <- readIORef nextSMeta
+  writeIORef nextSMeta (m + 1)
+  modifyIORef' smcxt $ IM.insert m SUnsolved
+  pure $ SMeta (SMetaVar m)
+
+freshMetaTy :: Cxt -> IO Type
+freshMetaTy cxt = do 
+  a <- freshMeta cxt
+  as <- freshSMeta
+  pure $ El a as
+
+unifyCatch :: HasGlobal => Cxt -> Val -> Val -> VType -> IO ()
 unifyCatch cxt t t' a = do 
   let ?unifyOrConv = True
   U.unifyCxt cxt t t' a
     `catch` \UnifyError ->
       throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
 
-unifyCatchTy :: HasGlobal => Cxt -> VTy -> VTy -> IO ()
+unifyCatchTy :: HasGlobal => Cxt -> VType -> VType -> IO ()
 unifyCatchTy cxt t t' = do 
   let ?unifyOrConv = True
   U.unifyCxtTy cxt t t'
     `catch` \UnifyError ->
-      throwIO $ Error cxt $ CantUnify (quoteCxt cxt t) (quoteCxt cxt t')
+      throwIO $ Error cxt $ CantUnify (quoteCxt cxt (unVEl t)) (quoteCxt cxt (unVEl t'))
 
 -- | Insert fresh implicit applications.
-insert' :: HasGlobal => Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
+insert' :: HasGlobal => Cxt -> IO (Tm, VType) -> IO (Tm, VType)
 insert' cxt act = go =<< act where
-  go (t, va) = case force va of
-    VPi x Impl a b -> do
+  go (t, VEl va vas) = case force va of
+    VPi x Impl a b bs -> do
       m <- freshMeta cxt
       let mv = evalCxt cxt m
-      go (App t m Impl, b $$ mv)
-    va -> pure (t, va)
+      go (App t m Impl, VEl (b $$ mv) bs)
+    va -> pure (t, VEl va vas)
 
 -- | Insert fresh implicit applications to a term which is not
 --   an implicit lambda (i.e. neutral).
-insert :: HasGlobal => Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
+insert :: HasGlobal => Cxt -> IO (Tm, VType) -> IO (Tm, VType)
 insert cxt act = act >>= \case
   (t@(Lam _ Impl _), va) -> pure (t, va)
   (t               , va) -> insert' cxt (pure (t, va))
 
 -- | Insert fresh implicit applications until we hit a Pi with
 --   a particular binder name.
-insertUntilName :: HasGlobal => Cxt -> Name -> IO (Tm, VTy) -> IO (Tm, VTy)
+insertUntilName :: HasGlobal => Cxt -> Name -> IO (Tm, VType) -> IO (Tm, VType)
 insertUntilName cxt name act = go =<< act where
-  go (t, va) = case force va of
-    va@(VPi x Impl a b) -> do
+  go (t, VEl va vas) = case force va of
+    va@(VPi x Impl a b bs) -> do
       if x == name then
-        pure (t, va)
+        pure (t, VEl va vas)
       else do
         m <- freshMeta cxt
         let mv = evalCxt cxt m
-        go (App t m Impl, b $$ mv)
+        go (App t m Impl, VEl (b $$ mv) bs)
     _ ->
       throwIO $ Error cxt $ NoNamedImplicitArg name
 
-check :: HasGlobal => Cxt -> R.Tm -> VTy -> IO Tm
-check cxt t a = case (t, force a) of
+check :: HasGlobal => Cxt -> R.Tm -> VType -> IO Tm
+check cxt t (VEl a asort) = case (t, force a) of
 
   (R.PrintCxt t, a) -> do
     putStrLn (showCxt cxt)
@@ -93,18 +106,18 @@ check cxt t a = case (t, force a) of
     -- NOTE. there might be some unsolved metas in the @a@ which can be solved soon after the check. 
     -- But the printing here still contains the unsolved metas.
     putStrLn $ showVal cxt a ++ "\n\n"
-    check cxt t a
+    check cxt t (VEl a asort)
 
   (R.SrcPos pos t, a) ->
-    check (cxt {pos = pos}) t a
+    check (cxt {pos = pos}) t (VEl a asort)
 
   -- If the icitness of the lambda matches the Pi type, check as usual
-  (R.Lam x i t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') i -> do
-    Lam x i' <$> check (bind cxt x a) t (b $$ VVar (lvl cxt))
+  (R.Lam x i t, VPi x' i' a b bsort) | either (\x -> x == x' && i' == Impl) (==i') i -> do
+    Lam x i' <$> check (bind cxt x a) t (VEl (b $$ VVar (lvl cxt)) bsort)
 
   -- Otherwise if Pi is implicit, insert a new implicit lambda
-  (t, VPi x Impl a b) -> do
-    Lam x Impl <$> check (newBinder cxt x a) t (b $$ VVar (lvl cxt))
+  (t, VPi x Impl a b bsort) -> do
+    Lam x Impl <$> check (newBinder cxt x a) t (VEl (b $$ VVar (lvl cxt)) bsort)
 
   -- See https://github.com/KonjacSource/ShiTT2/issues/1
   -- (t, a@(VData d sp)) | Just (c, sp) <- (trace ("| checking data: " ++ dataName d) $ isCons t) -> do 
@@ -112,11 +125,11 @@ check cxt t a = case (t, force a) of
   --   checkCons c sp (evalCxt cxt (consType c)) a
 
   (R.Let x a t u, a') -> do
-    (a, _) <- inferSort cxt a
+    a <- inferSort cxt a
     let va = evalCxt cxt a
     t <- check cxt t va
     let vt = evalCxt cxt t
-    u <- check (define cxt x vt va) u a'
+    u <- check (define cxt x vt va) u (VEl a' asort)
     pure (Let x a t u)
 
   (R.Absurd t, ty) -> do
@@ -127,8 +140,8 @@ check cxt t a = case (t, force a) of
       Just ctxs -> do
         putStrLn "Absurd context:"
         mapM_ (putStrLn . showCxt) ctxs
-        throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt t_ty)
-      Nothing -> throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt t_ty)
+        throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt (unVEl t_ty))
+      Nothing -> throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt (unVEl t_ty))
   
   (R.MkSig ts, VSig env tys) -> do 
     flds <- checkTele ts env tys
@@ -139,7 +152,7 @@ check cxt t a = case (t, force a) of
 
   (t, expected) -> do
     (t, inferred) <- insert cxt $ infer cxt t
-    unifyCatchTy cxt expected inferred
+    unifyCatchTy cxt (VEl expected asort) inferred
     pure t
   where
     checkTele :: [(Name, R.Tm)] -> Env -> Telescope' -> IO [(Name, Tm)]
@@ -153,32 +166,32 @@ check cxt t a = case (t, force a) of
     checkTele _ _ _ = throwIO $ Error cxt $ SigmaMismatch
 
 
-inferSort :: HasGlobal => Cxt -> R.Tm -> IO (Ty, Sort) 
+inferSort :: HasGlobal => Cxt -> R.Tm -> IO Type
 inferSort cxt t = case t of 
   R.SrcPos pos t -> inferSort (cxt {pos = pos}) t
-  R.Prop -> pure (Prop, SType) 
-  R.U    -> pure (Type, SType)
+  R.Prop -> pure (El Prop SType) 
+  R.U    -> pure (El Type SType)
   R.Pi x i a b -> do 
-    (a, at) <- inferSort cxt a
-    (b, bt) <- inferSort (bind cxt x (evalCxt cxt a)) b
-    pure (Pi x i a b, imax at bt)
-  R.Sig ts -> do { (ts, u) <- inferTele cxt ts; pure (Sig ts, u) } where
+    a <- inferSort cxt a
+    b <- inferSort (bind cxt x (evalCxt cxt a)) b
+    pure $ El (Pi x i a b) (imax (getSort a) (getSort b))
+  R.Sig ts -> do { (ts, u) <- inferTele cxt ts; pure $ El (Sig ts) u } where
               inferTele cxt [] = pure ([], SProp)
               inferTele cxt ((x, t):ts) = do
-                (t, st) <- inferSort cxt t
+                t <- inferSort cxt t
                 (ts, st') <- inferTele (bind cxt x (evalCxt cxt t)) ts
-                pure ((x, t):ts, umax1 st st')
+                pure ((x, t):ts, umax1 (getSort t) st')
   _ -> do 
     (t, ty) <- infer cxt t
-    case force ty of 
-      VType -> pure (t, SType)
-      VProp -> pure (t, SProp)
+    case force (unVEl ty) of 
+      VType -> pure $ El t SType
+      VProp -> pure $ El t SProp
       VFlex _ _ -> do
-        unifyCatchTy cxt ty VType
-        pure (t, SType)  -- TODO: We ignore that the case when t is in Prop, we should add this back when we have typed meta 
-      _ -> throwIO $ Error cxt $ NotAType (quoteCxt cxt ty)
+        unifyCatchTy cxt ty (VEl VType SType)
+        pure $ El t SType  -- TODO: We ignore that the case when t is in Prop, we should add this back when we have typed meta 
+      _ -> throwIO $ Error cxt $ NotAType (quoteCxt cxt (unVEl ty))
 
-infer :: HasGlobal => Cxt -> R.Tm -> IO (Tm, VTy)
+infer :: HasGlobal => Cxt -> R.Tm -> IO (Tm, VType)
 infer cxt = \case
 
   R.PrintCxt t -> do
@@ -195,17 +208,17 @@ infer cxt = \case
           | otherwise                   = go (ix + 1) types
         go ix [] = case M.lookup x ?defs of
           Just (DefFunc c) -> pure (Call x, eval (env cxt) (funcType c))
-          Just (DefCons c) -> pure (Call x, eval (env cxt) (consType c))
-          Just (DefData c) -> pure (Call x, eval (env cxt) (dataType c))
-          Just (DefEq c)   -> pure (Call x, eval (env cxt) (eqTypeDef c))
+          Just (DefCons c) -> pure (Call x, VEl (eval (env cxt) (consType c)) SType)
+          Just (DefData c) -> pure (Call x, VEl (eval (env cxt) (dataType c)) SType)
+          Just (DefEq c)   -> pure (Call x, VEl (eval (env cxt) (eqTypeDef c)) SProp)
           Nothing -> throwIO $ Error cxt $ NameNotInScope x
     go 0 (types cxt)
 
   R.Lam x (Right i) t -> do
-    a <- evalCxt cxt <$> freshMeta cxt
+    a <- evalCxt cxt <$> freshMetaTy cxt 
     let cxt' = bind cxt x a
-    (t, b) <- insert cxt' $ infer cxt' t
-    pure (Lam x i t, VPi x i a $ closeVal cxt b)
+    (t, VEl b bs) <- insert cxt' $ infer cxt' t
+    pure (Lam x i t, VEl (VPi x i a (closeVal cxt b) bs) (imax (getVSort a) bs))
 
   R.Lam x Left{} t ->
     throwIO $ Error cxt InferNamedLam
@@ -216,7 +229,7 @@ infer cxt = \case
     (i, t, tty) <- case i of
       Left name -> do
         (t, tty) <- insertUntilName cxt name $ infer cxt t
-        pure (Impl, t, tty)
+        pure (Impl, t, tty :: VType)
       Right Impl -> do
         (t, tty) <- infer cxt t
         pure (Impl, t, tty)
@@ -225,28 +238,29 @@ infer cxt = \case
         pure (Expl, t, tty)
 
     -- ensure that tty is Pi
-    (a, b) <- case force tty of
-      VPi x i' a b -> do
+    (a, b, bs) <- case force tty of
+      VEl (VPi x i' a b bs) _ -> do
         unless (i == i') $
           throwIO $ Error cxt $ IcitMismatch i i'
-        pure (a, b)
+        pure (a, b, bs)
       tty -> do
-        a <- evalCxt cxt <$> freshMeta cxt
+        a <- evalCxt cxt <$> freshMetaTy cxt
         b <- Closure (env cxt) <$> freshMeta (bind cxt "x" a)
-        unifyCatchTy cxt tty (VPi "x" i a b)
-        pure (a, b)
+        bs <- freshSMeta
+        unifyCatchTy cxt tty (VEl (VPi "x" i a b bs) (imax (getVSort a) bs))
+        pure (a, b, bs)
 
     u <- check cxt u a
-    pure (App t u i, b $$ evalCxt cxt u)
+    pure (App t u i, VEl (b $$ evalCxt cxt u) bs)
 
-  R.U    -> pure (Type, VType)
-  R.Prop -> pure (Prop, VType)
+  R.U    -> pure (Type, VEl VType SType)
+  R.Prop -> pure (Prop, VEl VType SType)
   t@(R.Pi {}) -> do
-    (t, sort) <- inferSort cxt t
-    pure (t, sortV sort)
+    El t sort <- inferSort cxt t
+    pure (t, VEl (VSort sort) (suc sort))
     
   R.Let x a t u -> do
-    (a, _) <- inferSort cxt a
+    a <- inferSort cxt a
     let ~va = evalCxt cxt a
     t <- check cxt t va
     let ~vt = evalCxt cxt t
@@ -254,12 +268,12 @@ infer cxt = \case
     pure (Let x a t u, b)
 
   R.Hole -> do
-    a <- evalCxt cxt <$> freshMeta cxt
+    a <- evalCxt cxt <$> freshMetaTy cxt
     t <- freshMeta cxt
     pure (t, a)
 
   R.Absurd t -> do
-    ty <- evalCxt cxt <$> freshMeta cxt
+    ty <- evalCxt cxt <$> freshMetaTy cxt
     t <- check cxt t ty
     pure (t, ty)
   R.Cast -> do
@@ -269,23 +283,23 @@ infer cxt = \case
   R.Rfl -> do
     pure (Prim Rfl, evalCxt cxt rflTy)
   R.Oeq a u v -> do
-    (a, _) <- inferSort cxt a 
+    a <- inferSort cxt a 
     let av = evalCxt cxt a
     u <- check cxt u av
     v <- check cxt v av
-    pure (applySp (Prim Oeq) [(a, Impl), (u, Expl), (v, Expl)], VProp)
+    pure (applySp (Prim Oeq) [(unEl a, Impl), (u, Expl), (v, Expl)], VEl VProp SType)
   t@(R.Sig ts) -> do 
-    (t', u) <- inferSort cxt t
-    pure (t', sortV u)
+    El t' u <- inferSort cxt t
+    pure (t', VEl (VSort u) (suc u))
   R.MkSig ts -> do -- infer as simple tuple
     (ts, tys) <- inferFld 0 ts
-    pure (MkSig ts, VSig (env cxt) tys)
+    pure (MkSig ts, VEl (VSig (env cxt) tys) (sortOf tys))
   R.Proj t x -> do
     (t, ty) <- insert' cxt $ infer cxt t
-    case U.getProjTy ty (eval (env cxt) t) x of 
-      Right vxty -> pure (Proj t x, vxty)
-      Left U.PEFieldNotFound -> throwIO $ Error cxt $ FieldNotFound x (quoteCxt cxt ty)
-      Left _ -> throwIO $ Error cxt $ NotASigma (quoteCxt cxt ty)
+    case U.getProjTy (unVEl ty) (eval (env cxt) t) x of 
+      Right txty -> pure (Proj t x, txty)
+      Left U.PEFieldNotFound -> throwIO $ Error cxt $ FieldNotFound x (quoteCxt cxt $ unVEl ty)
+      Left _ -> throwIO $ Error cxt $ NotASigma (quoteCxt cxt $ unVEl ty)
       
   where
     inferFld :: Lvl -> [(Name, R.Tm)] -> IO ([(Name, Tm)], Telescope')
@@ -353,8 +367,8 @@ data UnifRes
 -- Here ctx is the current context, u and v are the two values we are trying to unify,
 -- t is their type, and ctx' is the context after unification.
 -- We need to update the portion of the context that comes after the unified variable.
-unify :: HasGlobal => Cxt -> Val -> Val -> VTy -> IO UnifRes
-unify ctx u v t = do
+unify :: HasGlobal => Cxt -> Val -> Val -> VType -> IO UnifRes
+unify ctx u v (VEl t s) = do
   -- putStrLn $ "Unifying: " ++ showVal ctx u ++ " and " ++ showVal ctx v ++ " at type " ++ showVal ctx t
   case (force u, force v, force t) of
     (VVar x, v, _)
@@ -375,14 +389,14 @@ unify ctx u v t = do
       | otherwise -> pure UnifFail
     (u, v, t) -> do 
       let ?unifyOrConv = True
-      (U.unify ctx u v t >> pure (UnifOk ctx))
+      (U.unify ctx u v (VEl t s) >> pure (UnifOk ctx))
       `catch` \ UnifyError ->
           pure UnifStuck
 
 unifySp :: HasGlobal => Cxt -> Spine -> Spine -> VTy -> IO UnifRes
 unifySp ctx us vs ts = go ctx (reverse us) (reverse vs) ts where
   go ctx []                         []                          _ = pure $ UnifOk ctx
-  go ctx ((force -> u, i1):us) ((force -> v, i2):vs) (VPi x i3 t b) 
+  go ctx ((force -> u, i1):us) ((force -> v, i2):vs) (VPi x i3 t b _) 
     | i1 == i2 = do
       uni_res <- unify ctx (updateVal ctx u) (updateVal ctx v) t
       case uni_res of
@@ -416,10 +430,10 @@ updateCxt ctx x v = if length env' /= length bds' then error "!!!" else ctx {env
   -- The previous version only updated the later part of the context.
   refresh :: [Val] -> Types -> ([Val], Types)
   refresh [] [] = ([], [])
-  refresh (v:es) ((x,ori,t):tys) =
+  refresh (v:es) ((x, ori, VEl t tsort):tys) =
     let (es', tys') = refresh es tys
         env'' = changeTail env2 es'
-    in (freshVal env1 env'' v:es', (x, ori, freshVal env1 env'' t):tys')
+    in (freshVal env1 env'' v:es', (x, ori, VEl (freshVal env1 env'' t) tsort):tys')
   refresh _ _ = error "refresh: impossible"
 
   (env', typ') = refresh env1 typ
@@ -431,7 +445,7 @@ updateCxt ctx x v = if length env' /= length bds' then error "!!!" else ctx {env
 
   bds' = genBDs [ (Ix x, v) | (x, v) <- zip [0 .. length env' - 1] env' ]
 
-checkCls :: HasGlobal => Cxt -> Id -> Ty -> R.RClause -> IO Clause
+checkCls :: HasGlobal => Cxt -> Id -> Type -> R.RClause -> IO Clause
 checkCls ctx func_name func_typ (R.RClause rps rhs) = do
   let func_typ' = evalCxt ctx func_typ
   (ps, ctx', rhs_ty) <- checkPat False ctx rps func_typ'
@@ -447,9 +461,9 @@ checkCls ctx func_name func_typ (R.RClause rps rhs) = do
 -- isCons = True, if we are elaborating the patterns of a constructor.
 -- Throws `Error`, throw `DefError _ $ WrongPattern _ _` for absurd patterns, `DefError _ $ UnsurePattern _ _` for IDK patterns.
 -- TODO : Change the return type to `IO ([(Pattern, Icit)], Spine, Cxt, VTy)`
-checkPat :: HasGlobal => Bool -> Cxt -> R.RPatterns -> VTy -> IO ([(Pattern, Icit)], Cxt, VTy)
-checkPat isCons ctx [] ty
-  | isCons = case force ty of
+checkPat :: HasGlobal => Bool -> Cxt -> R.RPatterns -> VType -> IO ([(Pattern, Icit)], Cxt, VType)
+checkPat isCons ctx [] (force -> ty)
+  | isCons = case unVEl ty of
     -- If we are elaborating constructor patterns, we need to make sure all implicit patterns are filled.
     -- i.e.
     -- data Id : U -> U -> U where 
@@ -458,24 +472,24 @@ checkPat isCons ctx [] ty
     -- symm refl = refl 
     -- would be elaborated as
     -- symm (refl {u}) = refl 
-      VPi x Impl a b -> do
+      VPi x Impl a b bsort -> do
         let ctx' = bind ctx ('_':x) a
         let b' = b $$ VVar (lvl ctx)
-        (rps, rctx, rty) <- checkPat isCons ctx' [] b'
+        (rps, rctx, rty) <- checkPat isCons ctx' [] (VEl b' bsort)
         pure ((PatVar ('_':x), Impl): rps, rctx, rty)
       _ -> pure ([], ctx, ty)
   | otherwise = pure ([], ctx, ty)
-checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VPi x' i' (force -> a) b) | i == i' =
+checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VEl (VPi x' i' (force -> a) b bsort) _) | i == i' =
   case M.lookup c ?defs of
     Just (DefCons _) ->
-      case a of
+      case force (unVEl a) of
         VData d d_arg -> do
           (c_tele, c_ix) <- case lookupCons d c of
             Just r -> pure r
             Nothing -> throwIO $ DefError ctx $ NameIsNotCons c (Just d)
-          let c_ty = evalCxt ctx $ getConsType d c_tele c_ix
+          let c_ty = VEl (evalCxt ctx $ getConsType d c_tele c_ix) SType -- Type of a constructor's type must be a Type 
           (ps', ctx', c_ty') <- checkPat True ctx c_arg c_ty
-          d_arg' <- case c_ty' of
+          d_arg' <- case force (unVEl c_ty') of
             VData _ x -> pure x
             e -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx' e)
           let d_type = evalCxt ctx' (dataType d)
@@ -489,8 +503,8 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VPi x' i' (force ->
           uni_res <- unifySp ctx' d_arg d_arg' d_type
           ctx'' <- case uni_res of
             UnifOk c -> pure c
-            UnifStuck -> throwIO $ DefError ctx $ UnsurePattern c (quoteCxt ctx a)
-            UnifFail -> throwIO $ DefError ctx $ WrongPattern c (quoteCxt ctx a)
+            UnifStuck -> throwIO $ DefError ctx $ UnsurePattern c (quoteCxt ctx $ unVEl a)
+            UnifFail -> throwIO $ DefError ctx $ WrongPattern c (quoteCxt ctx $ unVEl a)
           -- b_rest is using an old Cxt in its closure, so we need to update it.
           -- So we have to refresh the Cxt.
           -- Note. Here p2v start from the level of ctx, not ctx''.
@@ -499,45 +513,41 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VPi x' i' (force ->
           let patVal' = evalCxt ctx'' (quoteCxt ctx'' patVal)
           let b_rest = b $$ patVal'
           let b_rest_updated = evalCxt ctx'' (quoteCxt ctx'' b_rest)
-          (rps, rctx, rty) <- checkPat isCons ctx'' ps b_rest_updated
+          (rps, rctx, rty) <- checkPat isCons ctx'' ps (VEl b_rest_updated bsort)
           pure ((p, i) : rps, rctx, rty)
-        _ -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx a)
+        _ -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx $ unVEl a)
     (Just (DefEq _)) | isQITCon c -> case M.lookup c (extraEq ?qitInfo) of
         Nothing -> error "checkPat: impossible"
-        Just conEq -> case force a of
+        Just conEq -> case force $ unVEl a of
           VPrim Oeq eq_arg@(reverse -> [(force -> VData d d_arg, Impl), (lhs, Expl), (rhs, Expl)]) | isQIT d -> do
             -- TODO: refactor, merge with the above code.
             let c_tele = eqTel conEq
             let c_ix = eqIx conEq
-            let c_ty = evalCxt ctx $ getPathConType d c_tele c_ix (eqLhs conEq) (eqRhs conEq)
+            let c_ty = VEl (evalCxt ctx $ getPathConType d c_tele c_ix (eqLhs conEq) (eqRhs conEq)) SProp -- Eq is a Prop
             -- putStrLn $ "lhs: " ++ showVal ctx lhs ++ " rhs: " ++ showVal ctx rhs
             -- putStrLn $
             --   "Checking constructor " ++ c ++ "with tele: " ++ show c_tele ++ " and ix: " ++ show c_ix ++ "\n get c_ty: " ++ showVal ctx c_ty
             (ps', ctx', c_ty') <- checkPat True ctx c_arg c_ty
-            eq_args' <- case c_ty' of
+            eq_args' <- case force $ unVEl c_ty' of
               VPrim Oeq sp@(reverse -> [(VData d' dsp, Impl), (lhs', Expl), (rhs', Expl)])
                 | dataName d' == dataName d -> pure sp
               e -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx' e)
-            let oeqTy = Pi "A" Impl Type $
-                        Pi "x" Expl (Var 0) $
-                        Pi "y" Expl (Var 1) $
-                        Type
-            -- Work mark
-            let oeq_type = evalCxt ctx' oeqTy
+              
+            let oeq_type = evalCxt ctx' (unEl oeqTy)
             -- remember to unify lhs and rhs
             -- putStrLn $ "Unifying: " ++ showSp ctx' eq_arg ++ " and " ++ showSp ctx' eq_args' ++ " at type " ++ showVal ctx' oeq_type
             uni_res <- unifySp ctx' eq_arg eq_args' oeq_type
             ctx'' <- case uni_res of
               UnifOk c  -> pure c
-              UnifStuck -> throwIO $ DefError ctx $ UnsurePattern c (quoteCxt ctx a)
-              UnifFail  -> throwIO $ DefError ctx $ WrongPattern  c (quoteCxt ctx a)
+              UnifStuck -> throwIO $ DefError ctx $ UnsurePattern c (quoteCxt ctx $ unVEl a)
+              UnifFail  -> throwIO $ DefError ctx $ WrongPattern  c (quoteCxt ctx $ unVEl a)
 
             let p = PatCon c ps'
             let patVal = p2v (lvl ctx) p
             let patVal' = evalCxt ctx'' (quoteCxt ctx'' patVal)
             let b_rest = b $$ patVal'
             let b_rest_updated = evalCxt ctx'' (quoteCxt ctx'' b_rest)
-            (rps, rctx, rty) <- checkPat isCons ctx'' ps b_rest_updated
+            (rps, rctx, rty) <- checkPat isCons ctx'' ps (VEl b_rest_updated bsort)
             pure ((p, i) : rps, rctx, rty)
 
           t -> error (show t) -- throwIO $ DefError ctx $ PMNoneEq (quoteCxt ctx a)
@@ -545,20 +555,20 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VPi x' i' (force ->
           let x = c
           let ctx' = bind ctx x a
           let b' = b $$ VVar (lvl ctx)
-          (ps', rest, rhs) <- checkPat isCons ctx' ps b'
+          (ps', rest, rhs) <- checkPat isCons ctx' ps (VEl b' bsort)
           pure ((PatVar x, i):ps', rest, rhs)
       | otherwise     -> throwIO $ DefError ctx $ NameIsNotCons c Nothing
-checkPat isCons ctx ps@((Left x, p):ps') (force -> VPi x' i' (force -> a) b)
-  | i' == Impl && x == x' = checkPat isCons ctx ((Right Impl, p):ps') (VPi x' Impl a b) -- Jump to the former clause
+checkPat isCons ctx ps@((Left x, p):ps') (force -> VEl (VPi x' i' (force -> a) b bsort) pisort)
+  | i' == Impl && x == x' = checkPat isCons ctx ((Right Impl, p):ps') (VEl (VPi x' Impl a b bsort) pisort) -- Jump to the former clause
   | otherwise             = do
       let ctx' = bind ctx ('_':x') a
       let b' = b $$ VVar (lvl ctx)
-      (rps, rctx, rty) <- checkPat isCons ctx' ps b'
+      (rps, rctx, rty) <- checkPat isCons ctx' ps (VEl b' bsort)
       pure ((PatVar ('_':x'), Impl): rps, rctx, rty)
-checkPat isCons ctx ps@((Right Expl, _):ps') (force -> VPi x' Impl (force -> a) b) = do
+checkPat isCons ctx ps@((Right Expl, _):ps') (force -> VEl (VPi x' Impl (force -> a) b bsort) pisort) = do
     let ctx' = bind ctx ('_':x') a
     let b' = b $$ VVar (lvl ctx)
-    (rps, rctx, rty) <- checkPat isCons ctx' ps b'
+    (rps, rctx, rty) <- checkPat isCons ctx' ps (VEl b' bsort)
     pure ((PatVar ('_':x'), Impl): rps, rctx, rty)
 checkPat isCons ctx ps t = throwIO $ DefError ctx $ PatArgMismatch
 
@@ -574,14 +584,14 @@ patApp (PatVar x) p = error "patApp: impossible"
 applyPat :: HasGlobal => Cxt -> (Pattern, Val) -> PatternTele Empty -> VTy -> IO (Cxt, Pattern, Val, VTy)
 applyPat cxt (f, fv) [] ty = pure (cxt, f, fv, ty)
 applyPat cxt (f, fv) ((p, i):ps) ty = case force ty of
-  VPi x i' a b | i == i' -> case (p, force a) of
+  VPi x i' a b _ | i == i' -> case (p, force a) of
     (PatVar x', a') -> do
       let cxt' = bind cxt x' a'
       let b' = b $$ VVar (lvl cxt)
       let f' = patApp f (p, i)
       let fv' = vApp fv (VVar (lvl cxt)) i
       applyPat cxt' (f', fv') ps b'
-    (PatCon c c_arg, VData d d_arg) -> do
+    (PatCon c c_arg, VEl (VData d d_arg) _) -> do
       (c_def, c_tele, c_ix) <- case (M.lookup c ?defs, lookupCons d c) of
           (Just (DefCons c_def), Just (r1, r2)) -> pure (c_def, r1, r2)
           _ -> error "applyPat: impossible"
@@ -629,7 +639,7 @@ checkCover genApdC ctx fn fty arity clss = case testManySpine genApdC fn clss [i
   where
     genInitSpine :: Cxt -> VTy -> Int -> (Cxt, Spine)
     genInitSpine cxt ty 0 = (cxt, [])
-    genInitSpine cxt (force -> VPi x i a b) arity =
+    genInitSpine cxt (force -> VPi x i a b _) arity =
       let (cxt', sp) = genInitSpine (bind cxt ("_cov_chk_"++x) a) (b $$ VVar (lvl cxt)) (arity - 1)
       in (cxt', sp ++ [(VVar (lvl cxt), i)]) -- TODO: Spine is reversed, change to normal list one day. 
     genInitSpine _ _ _ = error "genInitSpine: impossible"
@@ -642,13 +652,13 @@ checkCover genApdC ctx fn fty arity clss = case testManySpine genApdC fn clss [i
 -- Return `Nothing`, if there is one or more IDK constructors. 
 splitCxt :: HasGlobal => Cxt -> Lvl -> Maybe [Cxt]
 splitCxt cxt x = case force (findType cxt x) of
-  x_ty@(VData d d_arg) -> might $ do
+  x_ty@(VEl (VData d d_arg) ds) -> might $ do
     fmap join $ forM (dataCons d) $ \c@(c_name, c_tele, _) -> do
           -- split x to constructor c
           -- make a raw pattern
           let p = R.RPat c_name (makePs c_tele)
           -- check the pattern against x's type
-          cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl x_ty (Closure (env cxt) Type)) >>= pure . Just)
+          cp <- (checkPat False cxt [(Right Expl, p)] (VEl (VPi "_" Expl x_ty (Closure (env cxt) Type) SType) SType) >>= pure . Just) -- TODO: Univ Level
                                 `catch` \case
                                   DefError _ (UnsurePattern _ _) -> quitMight
                                   DefError _ (WrongPattern _ _) -> pure Nothing
@@ -661,7 +671,7 @@ splitCxt cxt x = case force (findType cxt x) of
               pure [cxt'']
             _ -> error "splitCxt: impossible"
   
-  x_ty@(VPrim Oeq sp@([]:>(a, _):>(lhs, _):>(rhs, _)))
+  x_ty@(VEl (VPrim Oeq sp@([]:>(a, _):>(lhs, _):>(rhs, _))) _)
     | VData d d_arg <- force a 
     -> might $ do 
       let cons = fromJust $ M.lookup (dataName d) (extraEq' ?qitInfo)
@@ -672,7 +682,7 @@ splitCxt cxt x = case force (findType cxt x) of
         -- make a raw pattern
         let p = R.RPat c_name (makePs c_tele)
         -- check the pattern against x's type
-        cp <- (checkPat False cxt [(Right Expl, p)] (VPi "_" Expl (VPrim Oeq sp) (Closure (env cxt) Type)) >>= pure . Just) 
+        cp <- (checkPat False cxt [(Right Expl, p)] (VEl (VPi "_" Expl (VEl (VPrim Oeq sp) SProp) (Closure (env cxt) Type) SType) SType) >>= pure . Just) 
                               `catch` \case
                                 DefError _ (UnsurePattern _ _) -> quitMight
                                 DefError _ (WrongPattern _ _) -> pure Nothing
@@ -712,7 +722,7 @@ testSpine clss cxt sp = go clss where -- cxt |- sp
 genSpine :: HasGlobal => Cxt -> Spine -> Lvl -> Maybe ([(Cxt, Spine)], Bool)
 genSpine cxt sp x = do
     fst <- genSpine' cxt sp x
-    case force (findType cxt x) of
+    case force $ unVEl (findType cxt x) of
       VData d d_arg ->
         pure (fst, isQIT d)
       VPrim Oeq ([]:>(force -> VData d d_arg, _):>(lhs, _):>(rhs, _)) -> 
@@ -764,11 +774,11 @@ generateApdClauses' cxt f ps = do
 -- apd (fps : (x : A) → B x) {x y : A} (h : x =_A y) : cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} B h) (fps x) =_{B y} fps y
 generateApdClauses :: HasGlobal => Cxt -> FuncDef -> PatternTele () -> IO ApdCls
 generateApdClauses cxt f ps' = do
-  (cxt', fps, fpsv, fpsty) <- applyPat cxt (PatFunc (funcName f) [], VFunc f []) ps (evalCxt cxt $ funcType f)
+  (cxt', fps, fpsv, fpsty) <- applyPat cxt (PatFunc (funcName f) [], VFunc f []) ps (evalCxt cxt $ unEl $ funcType f)
   -- putStrLn $ "applyPat used: fpsv= " ++ showVal cxt' fpsv ++ "; fpsty= " ++ showVal cxt' fpsty
   case force fpsty of
-    VPi x Expl a b -> -- a must be a QIT type 
-      case force a of
+    VPi x Expl a b _ -> -- a must be a QIT type 
+      case force $ unVEl a of
         VData d d_arg | isQIT d -> do
           let x_pat = PatVar "_x"
           let x_val = VVar (lvl cxt')
@@ -779,8 +789,8 @@ generateApdClauses cxt f ps' = do
           let pats = [(fps, Expl), (x_pat, Impl), (y_pat, Impl), (h_pat, Expl)]
           let vals = [(fpsv, Expl), (x_val, Impl), (y_val, Impl), (h_val, Expl)]
           let cxt'xy = bind (bind cxt' "_x" a) "_y" a
-          let h_ty = vAppSp (VPrim Oeq []) $ [] :> (a, Impl) :> (x_val, Expl) :> (y_val, Expl)
-          let cxt'xyh = bind cxt'xy "_h" h_ty
+          let h_ty = vAppSp (VPrim Oeq []) $ [] :> (unVEl a, Impl) :> (x_val, Expl) :> (y_val, Expl)
+          let cxt'xyh = bind cxt'xy "_h" (VEl h_ty SProp)
           -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} (λ z → B z) h) (fps x) =_{B y} fps y
           pure $ ApdCls
             cxt'xyh
@@ -816,7 +826,7 @@ checkApdCover fnName = do
               putStrLn $ "Error: There is no apd clause definition for funtion " ++ fnName -- make it better
               pure []
             Just lhss -> pure lhss
-      let res = testManySpine False (FuncDef "dummy-value" Type []) lhss cxtsp
+      let res = testManySpine False (FuncDef "dummy-value" (mkType Type) []) lhss cxtsp
       -- The function def is never used if the first arg is false.
       pure $ case res of
         Nothing -> Left MeetIDKCons

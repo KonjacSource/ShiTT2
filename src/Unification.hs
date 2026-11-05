@@ -18,6 +18,7 @@ import Cxt
 import Definition
 import Debug.Trace (trace)
 import Data.Maybe
+import Control.Monad
 
 -- Unification
 --------------------------------------------------------------------------------
@@ -78,8 +79,7 @@ rename m pren v = go pren v where
       Just x' -> goSp pren (Var $ lvl2Ix (dom pren) x') sp
 
     VLam x i t  -> Lam x i <$> go (lift pren) (t $$ VVar (cod pren))
-    VPi x i a b -> Pi x i <$> go pren a <*> go (lift pren) (b $$ VVar (cod pren))
-    VType       -> pure Type
+    VPi x i a b bs -> Pi x i <$> (El <$> go pren (unVEl a) <*> pure (getVSort a)) <*> (El <$> go (lift pren) (b $$ VVar (cod pren)) <*> pure bs)
     VAbsurd t   -> Absurd <$> go pren t
 
     VFunc f sp  -> goSp pren (Call (funcName f)) sp
@@ -87,7 +87,7 @@ rename m pren v = go pren v where
     VData f sp  -> goSp pren (Call (dataName f)) sp
     VCons f sp  -> goSp pren (Call (consName f)) sp
     VPathCons f sp -> goSp pren (Call (eqNameDef f)) sp
-    VProp       -> pure Prop
+    VSort s     -> pure $ TmSort s
     VPropTm     -> pure PropTm
     VPrim p sp  -> goSp pren (Prim p) sp
     VSig env tys -> Sig <$> goTele pren env tys
@@ -98,9 +98,10 @@ rename m pren v = go pren v where
   goTele pren env = \case 
     [] -> pure []
     (x, t):ts -> do 
-      t' <- go pren (eval env t)
+      let tv = eval env t
+      t' <- go pren (unVEl tv)
       ts' <- goTele (lift pren) (VVar (cod pren) : env) ts
-      pure $ (x, t') : ts'
+      pure $ (x, El t' (getSort t)) : ts'
 
 
 
@@ -129,36 +130,48 @@ type UnifyConfig = (?unifyOrConv :: Bool, HasGlobal) -- True for unification, Fa
 unifySp :: UnifyConfig => Cxt -> Spine -> Spine -> VTy -> IO ()
 unifySp cxt sp sp' = go cxt (reverse sp) (reverse sp') where 
   go cxt [] [] _ = pure ()
-  go cxt ((force -> t, _):us) ((force -> t', _):vs) (force -> VPi x i a b) = do 
+  go cxt ((force -> t, _):us) ((force -> t', _):vs) (force -> VPi x i a b bs) = do 
     unify cxt t t' a 
     go cxt us vs (b $$ t) -- No need to go under the binder
   go cxt _ _ _ = throwIO UnifyError
 
-unifyTy :: UnifyConfig => Cxt -> VTy -> VTy -> IO ()
-unifyTy cxt a b = unify cxt a b VType
+unifyTy :: UnifyConfig => Cxt -> VType -> VType -> IO ()
+unifyTy cxt (VEl a as) (VEl b bs) = do
+  unifySort cxt as bs
+  unify cxt a b (VEl VType SType)
 
--- TODO: Typed unification for irrelevance
+unifySort :: UnifyConfig => Cxt -> Sort -> Sort -> IO ()
+unifySort cxt s1 s2 = case (force s1, force s2) of 
+  (SType, SType) -> pure ()
+  (SProp, SProp) -> pure ()
+  (SType, SProp) -> throwIO UnifyError
+  (SProp, SType) -> throwIO UnifyError
+  
+  (SMeta m, s2) | ?unifyOrConv -> modifyIORef' smcxt $ IM.insert (unSMetaVar m) (SSolved s2)
+  (s1, SMeta m) | ?unifyOrConv -> modifyIORef' smcxt $ IM.insert (unSMetaVar m) (SSolved s1)
+  (s1, s2) -> error $ "TODO: " ++ show s1 ++ " ~ " ++ show s2
+
 -- unify :: Defs -> Env -> Lvl -> VTy -> Val -> Val -> IO ()
-unify :: UnifyConfig => Cxt -> Val -> Val -> VTy -> IO ()
+unify :: UnifyConfig => Cxt -> Val -> Val -> VType -> IO ()
 unify cxt@Cxt{..} t u ty = do 
-  case sortOf cxt ty of 
-    Just SProp -> case (?unifyOrConv, force t, force u) of 
-      (True, VFlex m sp, _) -> trySolve lvl m sp u >> pure ()
-      (True, _, VFlex m sp) -> trySolve lvl m sp t >> pure ()
+  case force (getVSort ty) of 
+    SProp -> case (?unifyOrConv, force t, force u) of 
+      (True, VFlex m sp, _) -> void $ trySolve lvl m sp u
+      (True, _, VFlex m sp) -> void $ trySolve lvl m sp t
       _ -> pure ()
-    Just SType -> unifyRelevant t u ty
-    Nothing    -> unifyRelevant t u ty
+    s -> unifyRelevant t u (unVEl ty) s -- Or, we can throw an error
+
   where
-    unifyRelevant t u ty = case (force t, force u, force ty) of
-      (VLam _ _ t , VLam _ _ t'    , VPi x _ a b) -> unify (bind cxt x a) (t $$ VVar lvl) (t' $$ VVar lvl) (b $$ VVar lvl)
-      (t          , VLam _ i t'    , VPi x _ a b) -> unify (bind cxt x a) (vApp t (VVar lvl) i) (t' $$ VVar lvl) (b $$ VVar lvl)
-      (VLam _ i t , t'             , VPi x _ a b) -> unify (bind cxt x a) (t $$ VVar lvl) (vApp t' (VVar lvl) i) (b $$ VVar lvl)
-      (VType      , VType          , _) -> pure ()
-      (VPi x i a b, VPi x' i' a' b', _) 
+    unifyRelevant :: UnifyConfig => Val -> Val -> VTy -> Sort -> IO ()
+    unifyRelevant t u ty sort = case (force t, force u, force ty) of
+      (VLam _ _ t , VLam _ _ t'    , VPi x _ a b bsort) -> unify (bind cxt x a) (t $$ VVar lvl) (t' $$ VVar lvl) (VEl (b $$ VVar lvl) bsort)
+      (t          , VLam _ i t'    , VPi x _ a b bsort) -> unify (bind cxt x a) (vApp t (VVar lvl) i) (t' $$ VVar lvl) (VEl (b $$ VVar lvl) bsort)
+      (VLam _ i t , t'             , VPi x _ a b bsort) -> unify (bind cxt x a) (t $$ VVar lvl) (vApp t' (VVar lvl) i) (VEl (b $$ VVar lvl) bsort)
+      (VPi x i a b bsort, VPi x' i' a' b' b'sort, _) 
         | i == i' -> do
           unifyTy cxt a a'
-          unifyTy (bind cxt x a) (b $$ VVar lvl) (b' $$ VVar lvl)
-      (VRigid x sp, VRigid x' sp'  , _) | x == x' -> unifySp cxt sp sp' (findType cxt x)
+          unifyTy (bind cxt x a) (VEl (b $$ VVar lvl) bsort) (VEl (b' $$ VVar lvl) b'sort)
+      (VRigid x sp, VRigid x' sp'  , _) | x == x' -> unifySp cxt sp sp' (unVEl $ findType cxt x)
       -- (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp env l sp sp' -- we need typed meta to support this
       (VFlex m sp  , t'             , _) | ?unifyOrConv -> solve lvl m sp t'
       (t           , VFlex m' sp'   , _) | ?unifyOrConv -> solve lvl m' sp' t
@@ -173,28 +186,28 @@ unify cxt@Cxt{..} t u ty = do
 
       (VPropTm    , _       , _) -> pure ()
       (_          , VPropTm , _) -> pure ()
-      (VProp      , VProp   , _) -> pure ()
+      (VSort s    , VSort s', _) -> unifySort cxt s s'
       (VPrim Cast vs, t     , _)
         | unsafePerformIO $ unifyCast vs t -> pure ()
       (t, VPrim Cast vs     , _)
         | unsafePerformIO $ unifyCast vs t -> pure ()
       (VPrim p vs, VPrim p' vs' , _)
-        | p == p' -> unifySp cxt vs vs' (evalCxt cxt (getPrimTy p))
+        | p == p' -> unifySp cxt vs vs' (evalCxt cxt (unEl $ getPrimTy p))
       (VSig env tys, VSig env' tys', _) -> unifyTele cxt env tys env' tys'
       (VProj v x vs, VProj v' x' vs', ty)
         | x == x' -> do
           vt <- liftMaybe $ inferNeu cxt v 
-          unify cxt v v' vt
+          unify cxt v v' (VEl vt sort) -- TODO: univ level, here sort is ok beacuse under type in type
           vxt <- liftMaybe $ getProjTy' vt v x
-          unifySp cxt vs vs' vxt
+          unifySp cxt vs vs' (unVEl vxt)
       (VMkSig ts, VMkSig ts', VSig env tys) -> unifySig ts ts' env tys 
       (VMkSig ts, p         , VSig env tys) -> unifySig ts (etaExpSig tys p) env tys
       (p        , VMkSig ts', VSig env tys) -> unifySig (etaExpSig tys p) ts' env tys
 
-      (t          , VFunc f  sp    , ty) -> unifyWithEvalFn t (f, sp) ty
-      (VFunc f  sp, t              , ty) -> unifyWithEvalFn t (f, sp) ty
-      (t          , VHold f  sp _  , ty) -> unifyWithEvalFn t (f, sp) ty
-      (VHold f  sp _, t            , ty) -> unifyWithEvalFn t (f, sp) ty
+      (t          , VFunc f  sp    , ty) -> unifyWithEvalFn t (f, sp) (VEl ty SType)
+      (VFunc f  sp, t              , ty) -> unifyWithEvalFn t (f, sp) (VEl ty SType)
+      (t          , VHold f  sp _  , ty) -> unifyWithEvalFn t (f, sp) (VEl ty SType)
+      (VHold f  sp _, t            , ty) -> unifyWithEvalFn t (f, sp) (VEl ty SType)
 
       _                            -> throwIO UnifyError  -- rigid mismatch error
 
@@ -203,9 +216,9 @@ unify cxt@Cxt{..} t u ty = do
     liftMaybe Nothing  = throwIO UnifyError
 
     unifyFn :: (FuncDef, Spine) -> (FuncDef, Spine) -> IO ()
-    unifyFn (f, sp) (f', sp') | funcName f == funcName f' = unifySp cxt sp sp' (evalCxt cxt (funcType f))
+    unifyFn (f, sp) (f', sp') | funcName f == funcName f' = unifySp cxt sp sp' (evalCxt cxt (unEl $ funcType f))
                               | otherwise                 = throwIO UnifyError
-    unifyWithEvalFn :: Val -> (FuncDef, Spine) -> VTy -> IO ()
+    unifyWithEvalFn :: Val -> (FuncDef, Spine) -> VType -> IO ()
     unifyWithEvalFn t (f, sp) ty = case evalFun' env f sp of 
                                   Just v' -> unify cxt t v' ty
                                   Nothing -> trace (show t ++ "\n" ++ funcName f ++ " " ++ show sp) $ throwIO UnifyError 
@@ -243,72 +256,80 @@ unify cxt@Cxt{..} t u ty = do
 -- | try unifying, if fails, restore the metacontext and return False
 -- | TODO: We do not want to solve metas during trying unification, 
 -- |       so we need bool arg in unify to control this
-conv :: HasGlobal => Cxt -> Val -> Val-> IO Bool
+conv :: HasGlobal => Cxt -> VTy -> VTy-> IO Bool
 conv cxt t u = do
   let ?unifyOrConv = False 
-  (unifyTy cxt t u >> pure True) 
+  (unify cxt t u (VEl VType SType) >> pure True) 
     `catch` \UnifyError -> pure False
     
-unifyCxt :: UnifyConfig => Cxt -> Val -> Val -> VTy -> IO ()
+unifyCxt :: UnifyConfig => Cxt -> Val -> Val -> VType -> IO ()
 unifyCxt = unify
 
-unifyCxtTy :: UnifyConfig => Cxt -> VTy -> VTy -> IO ()
+unifyCxtTy :: UnifyConfig => Cxt -> VType -> VType -> IO ()
 unifyCxtTy = unifyTy
 
-findType :: Cxt -> Lvl -> VTy
+findType :: Cxt -> Lvl -> VType
 findType cxt (lvl2Ix (lvl cxt) -> unIx -> ix) = case types cxt !! ix of
   (_, _, a) -> a
 
--- Recover the type of values. 
--- Maybe we should change to Agda's El to store a type and its sort together
+-- -- Recover the type of values. 
+-- -- Maybe we should change to Agda's El to store a type and its sort together
 
--- Returns Nothing if IDK
-sortOf :: HasGlobal => Cxt -> VTy -> Maybe Sort 
-sortOf cxt@Cxt{..} ty = case force ty of 
-  VPi x i a b   -> sortOf (bind cxt x a) (b $$ VVar lvl)
-  VType         -> Just SType
-  VProp         -> Just SType
-  VRigid x sp   -> sortOfApp cxt (findType cxt x) sp 
-  VData d sp    -> sortOfApp cxt (evalCxt cxt (dataType d)) sp
-  VFunc f sp    -> sortOfApp cxt (evalCxt cxt (funcType f)) sp
-  VHold f sp _  -> sortOfApp cxt (evalCxt cxt (funcType f)) sp
-  VPrim Oeq _   -> Just SProp
-  VPrim Cast sp -> sortOfApp cxt (evalCxt cxt (getPrimTy Cast)) sp
-  VSig env tys  -> sortOfTele cxt env tys
-  VProj x n sp  -> do
-    vty <- inferNeu cxt x
-    vxty <- getProjTy' vty x n
-    sortOfApp cxt vxty sp
-  VFlex _ _    -> Nothing -- TODO: Typed Meta
-  VAbsurd _    -> Nothing
+-- -- Returns Nothing if IDK
+-- sortOf :: HasGlobal => Cxt -> VTy -> Maybe Sort 
+-- sortOf cxt@Cxt{..} ty = case force ty of 
+--   VPi x i a b bsort -> sortOf (bind cxt x a) (b $$ VVar lvl)
+--   VType         -> Just SType
+--   VProp         -> Just SType
+--   VRigid x sp   -> sortOfApp cxt (findType cxt x) sp 
+--   VData d sp    -> sortOfApp cxt (evalCxt cxt (dataType d)) sp
+--   VFunc f sp    -> sortOfApp cxt (evalCxt cxt (funcType f)) sp
+--   VHold f sp _  -> sortOfApp cxt (evalCxt cxt (funcType f)) sp
+--   VPrim Oeq _   -> Just SProp
+--   VPrim Cast sp -> sortOfApp cxt (evalCxt cxt (getPrimTy Cast)) sp
+--   VSig env tys  -> sortOfTele cxt env tys
+--   VProj x n sp  -> do
+--     vty <- inferNeu cxt x
+--     vxty <- getProjTy' vty x n
+--     sortOfApp cxt vxty sp
+--   VFlex _ _    -> Nothing -- TODO: Typed Meta
+--   VAbsurd _    -> Nothing
 
-  VPrim Apd sp -> error "impossible: not a type"
-  VPrim Rfl sp -> error "impossible: not a type"
-  VLam {}      -> error "impossible: not a type"
-  VPathCons {} -> error "impossible: not a type"
-  VPropTm      -> error "impossible: not a type"
-  VCons c sp   -> error "impossible: not a type"
-  VMkSig ts    -> error "impossible: not a type"
+--   VPrim Apd sp -> error "impossible: not a type"
+--   VPrim Rfl sp -> error "impossible: not a type"
+--   VLam {}      -> error "impossible: not a type"
+--   VPathCons {} -> error "impossible: not a type"
+--   VPropTm      -> error "impossible: not a type"
+--   VCons c sp   -> error "impossible: not a type"
+--   VMkSig ts    -> error "impossible: not a type"
 
 inferNeu :: HasGlobal => Cxt -> Val -> Maybe VTy 
 inferNeu cxt t = case force t of
-  VRigid x sp  -> inferNeuSp cxt (findType cxt x) sp
+  VRigid x sp  -> inferNeuSp cxt (unVEl $ findType cxt x) sp
   VData d sp   -> inferNeuSp cxt (evalCxt cxt (dataType d)) sp
-  VFunc f sp   -> inferNeuSp cxt (evalCxt cxt (funcType f)) sp
-  VHold f sp _ -> inferNeuSp cxt (evalCxt cxt (funcType f)) sp
+  VFunc f sp   -> inferNeuSp cxt (evalCxt cxt (unEl $ funcType f)) sp
+  VHold f sp _ -> inferNeuSp cxt (evalCxt cxt (unEl $ funcType f)) sp
   VFlex m sp   -> Nothing -- TODO: Typed Meta
   VProj v x sp -> do
     vty <- inferNeu cxt v
     vxty <- getProjTy' vty v x
-    inferNeuSp cxt vxty sp
-  VPrim p sp   -> inferNeuSp cxt (evalCxt cxt (getPrimTy p)) sp
+    inferNeuSp cxt (unVEl vxty) sp
+  VPrim p sp   -> inferNeuSp cxt (evalCxt cxt (unEl $ getPrimTy p)) sp
   _            -> error "impossible: not a neutral term" 
+
+-- ty is the type of the head of the spine
+inferNeuSp :: HasGlobal => Cxt -> VTy -> Spine -> Maybe VTy
+inferNeuSp cxt ty sp = go (reverse sp) ty where 
+  go [] ty = Just ty
+  go ((v, i):sp) (force -> VPi x i' a b bs) | i == i' = go sp (b $$ v)
+  go _ (force -> VFlex m sp) = Nothing -- TODO: Typed Meta
+  go _ _ = error "impossible: failed to apply type"
 
 data ProjErr = PENotSig | PEFieldNotFound | PEFlex
 
 -- Returen the type of v.x
 -- This function is also used in elaboration
-getProjTy :: HasGlobal => VTy -> Val -> Name -> Either ProjErr VTy
+getProjTy :: HasGlobal => VTy -> Val -> Name -> Either ProjErr VType
 getProjTy (force -> VSig env tys) v x = case fieldType tys x of 
   Just (map fst -> tel, ty) -> 
     pure $ eval (go env tel) ty where
@@ -318,33 +339,26 @@ getProjTy (force -> VSig env tys) v x = case fieldType tys x of
 getProjTy (force -> VFlex _ _) _ _ = Left PEFlex
 getProjTy _ _ _ = Left PENotSig
 
-getProjTy' :: HasGlobal => VTy -> Val -> Name -> Maybe VTy
+getProjTy' :: HasGlobal => VTy -> Val -> Name -> Maybe VType
 getProjTy' vty v x = case getProjTy vty v x of 
   Right vxty -> Just vxty
   Left PEFlex  -> Nothing -- TODO: Typed Meta
   Left _ -> error "impossible: not a sigma type"  
 
--- ty is the type of the head of the spine
-inferNeuSp :: HasGlobal => Cxt -> VTy -> Spine -> Maybe VTy
-inferNeuSp cxt ty sp = go (reverse sp) ty where 
-  go [] ty = Just ty
-  go ((v, i):sp) (force -> VPi x i' a b) | i == i' = go sp (b $$ v)
-  go _ (force -> VFlex m sp) = Nothing -- TODO: Typed Meta
-  go _ _ = error "impossible: failed to apply type"
 
-sortOfTele :: HasGlobal => Cxt -> Env -> Telescope' -> Maybe Sort
-sortOfTele cxt env = \case 
-  [] -> Just SProp -- Unit Prop
-  (x, t):ts -> case sortOf cxt (eval env t) of
-        Just s  -> do 
-          s' <- sortOfTele (bind cxt x (eval env t)) (VVar (lvl cxt) : env) ts
-          pure $ umax1 s s'
-        Nothing -> Nothing
+-- sortOfTele :: HasGlobal => Cxt -> Env -> Telescope' -> Maybe Sort
+-- sortOfTele cxt env = \case 
+--   [] -> Just SProp -- Unit Prop
+--   (x, t):ts -> case sortOf cxt (eval env t) of
+--         Just s  -> do 
+--           s' <- sortOfTele (bind cxt x (eval env t)) (VVar (lvl cxt) : env) ts
+--           pure $ umax1 s s'
+--         Nothing -> Nothing
 
-sortOfApp :: HasGlobal => Cxt -> VTy -> Spine -> Maybe Sort
-sortOfApp cxt ty sp = case inferNeuSp cxt ty sp of 
-  Just (force -> VType)    -> Just SType
-  Just (force -> VProp)    -> Just SProp
-  Just (force -> VFlex {}) -> Nothing -- TODO: Typed Meta
-  Just _                   -> error "impossible: not a type"
-  Nothing -> Nothing
+-- sortOfApp :: HasGlobal => Cxt -> VTy -> Spine -> Maybe Sort
+-- sortOfApp cxt ty sp = case inferNeuSp cxt ty sp of 
+--   Just (force -> VType)    -> Just SType
+--   Just (force -> VProp)    -> Just SProp
+--   Just (force -> VFlex {}) -> Nothing -- TODO: Typed Meta
+--   Just _                   -> error "impossible: not a type"
+--   Nothing -> Nothing

@@ -14,7 +14,7 @@ import Metacontext
 import Parser
 import Pretty
 import Elaboration
-
+import Value
 import qualified Presyntax as P
 import DefinitionElaboration
 import qualified Data.Map as M
@@ -101,12 +101,12 @@ mainWith getOpt getRaw = do
       withGlobal' defsR $ do
         putStrLn $ showTm0 $ nf [] t
         putStrLn "  :"
-        putStrLn $ showTm0 $ quote 0 a
+        putStrLn $ showTm0 $ quote 0 $ unVEl a
     ["type"] -> do
       (t, a) <- elab
       withGlobal' defsR $ do
         putStrLn "  :"
-        putStrLn $ showTm0 $ quote 0 a
+        putStrLn $ showTm0 $ quote 0 $ unVEl a
     ["elab"] -> do
       (t, a) <- elab
       withGlobal' defsR $ do
@@ -182,14 +182,14 @@ repl' (ori_defs, qiti) = do
       ":t":(unwords -> expr) -> do
         (t, a) <- elab defsR expr
         withGlobal' defsR $ do
-          putStrLn $ showTm0 $ quote 0 a
+          putStrLn $ showTm0 $ quote 0 $ unVEl a
           loop defsR
       ":nf":(unwords -> expr)   -> do
         (t, a) <- elab defsR expr
         withGlobal' defsR $ do
           putStrLn $ showTm0 $ nf [] t
           putStrLn "  :"
-          putStrLn $ showTm0 $ quote 0 a
+          putStrLn $ showTm0 $ quote 0 $ unVEl a
           loop defsR
       [":q"] -> putStrLn "Bye!"
       [":l", fp] -> do

@@ -23,17 +23,17 @@ emptyCxt :: SourcePos -> Cxt
 emptyCxt = Cxt [] 0 [] []
 
 -- | Extend Cxt with a bound variable.
-bind :: Cxt -> Name -> VTy -> Cxt
+bind :: Cxt -> Name -> VType -> Cxt
 bind (Cxt env l types bds pos) x ~a =
   Cxt (env :> VVar l) (l + 1) (types :> (x, Source, a)) (bds :> Bound) pos
 
 -- | Insert a new binding.
-newBinder :: Cxt -> Name -> VTy -> Cxt
+newBinder :: Cxt -> Name -> VType -> Cxt
 newBinder (Cxt env l types bds pos) x ~a =
   Cxt (env :> VVar l) (l + 1) (types :> (x, Inserted, a)) (bds :> Bound) pos
 
 -- | Extend Cxt with a definition.
-define :: Cxt -> Name -> Val -> VTy -> Cxt
+define :: Cxt -> Name -> Val -> VType -> Cxt
 define (Cxt env l types bds pos) x ~t ~a  =
   Cxt (env :> t) (l + 1) (types :> (x, Source, a)) (bds :> Defined) pos
 
@@ -61,14 +61,14 @@ showTm cxt t = prettyTm 0 (cxtNames cxt) t []
 showCxt :: HasGlobal => Cxt -> String
 showCxt ctx@(Cxt values _ types _ _) = "\n" ++ go values types where 
   go [] [] = ""
-  go (v:vs) ((x, ori, t):ts) = 
+  go (v:vs) ((x, ori, VEl t _):ts) = 
     go vs ts ++ "\n" ++
 
     x ++ " : " ++ showVal ctx (updateVal ctx t) ++ " := " ++
     showVal ctx (updateVal ctx v)
   go _ _ = error "impossible"
 showFunc :: FuncDef -> String 
-showFunc (FuncDef funcName fty cls) = "def " ++ funcName ++ " : " ++ showTm0 fty ++ join (map showCls cls) where 
+showFunc (FuncDef funcName fty cls) = "def " ++ funcName ++ " : " ++ showTm0 (unEl fty) ++ join (map showCls cls) where 
   showCls (Clause ps rhs) = 
     "\n| " ++ join (map showPat ps) ++ "= " ++ prettyTm 0 (genNames ps) rhs [] 
   -- TODO : Make this better

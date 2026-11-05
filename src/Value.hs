@@ -12,12 +12,13 @@ type VTelescope' = [(Name, VTy)]
 data Closure = Closure Env Tm deriving Show 
 
 type VTy     = Val
+data VType   = VEl { unVEl :: VTy, getVSort :: Sort } deriving Show
+
 data Val
   = VFlex MetaVar Spine
   | VRigid Lvl Spine
   | VLam Name Icit {-# unpack #-} Closure
-  | VPi Name Icit ~VTy {-# unpack #-} Closure
-  | VType
+  | VPi Name Icit ~VType {-# unpack #-} Closure Sort
   | VAbsurd Val
   | VFunc FuncDef Spine -- TODO: Change the FuncDefs to Name. Sometimes the FuncDef might be out of date.
   | VHold FuncDef Spine (Maybe MetaVar) 
@@ -26,7 +27,7 @@ data Val
   | VCons ConsDef Spine
   | VPathCons EqConsDef Spine
 
-  | VProp 
+  | VSort Sort
   | VPropTm 
   | VPrim Prim Spine 
 
@@ -40,6 +41,11 @@ pattern VVar x = VRigid x []
 
 pattern VMeta :: MetaVar -> Val
 pattern VMeta m = VFlex m []
+
+pattern VType :: Val
+pattern VType = VSort SType
+pattern VProp :: Val
+pattern VProp = VSort SProp
 
 -- eqName : eqTel -> eqLhs =_{eqData eqIx} eqRhs
 data EqCons = EqCons 
@@ -59,10 +65,10 @@ eqCons2Defs EqCons{..} = EqConsDef
   } where 
     goPi :: Telescope -> Tm -> Tm
     goPi [] t = t
-    goPi ((x, i, a):rest) t = Pi x i a (goPi rest t)
+    goPi ((x, i, a):rest) t = Pi x i a (mkProp (goPi rest t))
     mkEq :: Tm -> Tm -> TSpine -> Tm 
     mkEq lhs rhs sp = applySp (Prim Oeq) [(applySp (Call (dataName eqData)) sp, Impl), (lhs, Expl), (rhs, Expl)]
 
-sortV :: Sort -> VTy
-sortV SType = VType
-sortV SProp = VProp
+instance SortOf VType where
+  sortOf (VEl _ s) = s
+

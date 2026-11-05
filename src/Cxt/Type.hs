@@ -14,7 +14,7 @@ import Data.IORef
 -------------------------- 
 
 data NameOrigin = Inserted | Source deriving Eq
-type Types = [(String, NameOrigin, VTy)]
+type Types = [(String, NameOrigin, VType)]
 
 data Cxt = Cxt              -- used for:
   ----------------------------------------------------------------

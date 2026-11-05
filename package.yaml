@@ -62,6 +62,11 @@ default-extensions:
 - RecordWildCards
 - DeriveFunctor
 - RankNTypes
+- MultiParamTypeClasses 
+- FunctionalDependencies
+- TypeSynonymInstances 
+- FlexibleInstances 
+- TypeFamilies 
 
 library:
   source-dirs: src
