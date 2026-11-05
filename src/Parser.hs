@@ -84,11 +84,11 @@ pAtom'  =
                <|> (Hole <$  char '_'))
   <|> parens pTm
   <|> (pKeyword "printcxt" >> brackets pTm >>= pure . PrintCxt)
-  <|> (pKeyword "sorry" >> pure (PrintCxt Hole))
-  <|> (pKeyword "Prop" >> pure Prop)
-  <|> (pKeyword "cast" >> pure Cast)
-  <|> (pKeyword "apd" >> pure Apd)
-  <|> (pKeyword "rfl" >> pure Rfl)
+  <|> (pKeyword "sorry"    >> pure (PrintCxt Hole))
+  <|> (pKeyword "Prop"     >> pure Prop)
+  <|> (pKeyword "cast"     >> pure Cast)
+  <|> (pKeyword "apd"      >> pure Apd)
+  <|> (pKeyword "rfl"      >> pure Rfl)
   <|> pSigTy
   <|> try pSigTm
   <|> pSigTm'

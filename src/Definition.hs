@@ -53,7 +53,6 @@ instance Show FuncDef where
 instance Show DataDef where 
   show = dataName
 
-
 lookupCons :: DataDef -> Name -> Maybe (Telescope, TSpine)
 lookupCons (DataDef d _ cons _) c = go cons where 
   go [] = Nothing
@@ -136,3 +135,10 @@ data RDef
 
 type Program = [(SourcePos, RDef)]
 
+mkPi :: Telescope -> Ty -> Ty 
+mkPi [] t = t
+mkPi ((x, i, a):ts) t = Pi x i a (mkPi ts t)
+
+mkPi' :: Telescope' -> Ty -> Ty
+mkPi' [] t = t
+mkPi' ((x, a):ts) t = Pi x Expl a (mkPi' ts t)

@@ -142,7 +142,7 @@ check cxt t a = case (t, force a) of
     unifyCatchTy cxt expected inferred
     pure t
   where
-    checkTele :: [(Name, R.Tm)] -> Env -> [(Name, Ty)] -> IO [(Name, Tm)]
+    checkTele :: [(Name, R.Tm)] -> Env -> Telescope' -> IO [(Name, Tm)]
     checkTele [] _ [] = pure []
     checkTele ((x, t):ts) env ((x', a):tys) 
       | x == "_" || x == x' = do 
@@ -288,7 +288,7 @@ infer cxt = \case
       Left _ -> throwIO $ Error cxt $ NotASigma (quoteCxt cxt ty)
       
   where
-    inferFld :: Lvl -> [(Name, R.Tm)] -> IO ([(Name, Tm)], [(Name, Ty)])
+    inferFld :: Lvl -> [(Name, R.Tm)] -> IO ([(Name, Tm)], Telescope')
     inferFld i [] = pure ([], [])
     inferFld i ((x, t):ts)  = do
         (t, ty) <- infer cxt t

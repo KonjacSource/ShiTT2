@@ -217,7 +217,7 @@ unify cxt@Cxt{..} t u ty = do
       else pure False
     unifyCast _ _ = pure False
 
-    unifyTele :: Cxt -> Env -> [(Name, Ty)] -> Env -> [(Name, Ty)] -> IO ()
+    unifyTele :: Cxt -> Env -> Telescope' -> Env -> Telescope' -> IO ()
     unifyTele cxt env [] env' [] = pure ()
     unifyTele cxt@Cxt{lvl = l} env ((x, t):ts) env' ((x', t'):ts') 
       | x == x' = do
@@ -226,7 +226,7 @@ unify cxt@Cxt{..} t u ty = do
       | otherwise = throwIO UnifyError
     unifyTele _ _ _ _ _ = throwIO UnifyError
 
-    unifySig :: [(Name, Val)] -> [(Name, Val)] -> Env -> [(Name, Ty)] -> IO ()
+    unifySig :: [(Name, Val)] -> [(Name, Val)] -> Env -> Telescope' -> IO ()
     unifySig [] [] _ [] = pure ()
     unifySig ((x, t):ts) ((x', t'):ts') env ((y, a):as) 
       | x == y && x' == y = do
@@ -236,7 +236,7 @@ unify cxt@Cxt{..} t u ty = do
     unifySig _ _ _ _ = error "impossible"
 
     -- p : sig {x ; y} --> {p.x; p.y}
-    etaExpSig :: [(Name, Ty)] -> Val -> [(Name, Val)]
+    etaExpSig :: Telescope' -> Val -> [(Name, Val)]
     etaExpSig []          _ = []
     etaExpSig ((x, _):ts) v = (x, vProj v x) : etaExpSig ts v
 
@@ -332,7 +332,7 @@ inferNeuSp cxt ty sp = go (reverse sp) ty where
   go _ (force -> VFlex m sp) = Nothing -- TODO: Typed Meta
   go _ _ = error "impossible: failed to apply type"
 
-sortOfTele :: HasGlobal => Cxt -> Env -> [(Name, Ty)] -> Maybe Sort
+sortOfTele :: HasGlobal => Cxt -> Env -> Telescope' -> Maybe Sort
 sortOfTele cxt env = \case 
   [] -> Just SProp -- Unit Prop
   (x, t):ts -> case sortOf cxt (eval env t) of

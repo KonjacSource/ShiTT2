@@ -99,10 +99,67 @@ vApp t u i = case force t of
   VCons c sp     -> VCons c (sp :> (u,i))
   VPathCons c sp -> VPathCons c (sp :> (u, i))
   VData d sp     -> VData d (sp :> (u,i))
-  VPrim Cast vs  -> VPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
   VProj v x sp   -> VProj v x (sp :> (u, i))
+  VPrim Cast vs  -> VPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
+  VPrim Oeq  vs  -> vOeq (vs :> (u, i))
   VPrim p vs     -> VPrim p (vs :> (u, i))
   t              -> error $ "IMPOSSIBLE: " ++ show t
+
+vOeq :: HasGlobal => Spine -> Val
+vOeq [(a, Impl), (t, Expl), (u, Expl)] = case (force a, force t, force u) of 
+  _ -> VPrim Oeq [(a, Impl), (t, Expl), (u, Expl)] -- TODO!!!
+vOeq vs = VPrim Oeq vs
+
+-- | Generating a sigma type, recording the equality between two telescopes.
+-- | Δ1 = (x1 : A1) (x2 : A2[x1]) ... (xn : An[..])
+-- | Δ2 = (x1 : B1) (x2 : B2[y1]) ... (xn : Bn[..])     -- field names must agree
+-- | we get
+--   sig
+--   { x1 : A1 ~ B1
+--   ; x2 : (x1 : A1) -> A2[x1] ~ B2[y1]
+--   ; x3 : (x1 : A1) (x2 : A2[x1]) -> A3[x1, x2] ~ B3[y1, y2]
+--   ...}
+--   where y1 = cast [A1 ~> B1] .. x1,  y2 = cast [A2[x1] ~> B2[y1]] .. x2, ...
+oeqTeleTy :: HasGlobal => (Env, Telescope') -> (Env, Telescope') -> Maybe VTy
+oeqTeleTy (envA, as) (envB, bs)
+  | fieldNames == map fst bs = Just $ VSig famEnv [ (x, eqField k) | (k, x) <- zip [0 ..] fieldNames ]
+  | otherwise                = Nothing
+  where
+    n          = length as
+    fieldNames = map fst as
+    -- env ⊢ tys  ==>  env ⊢ λ x_0 .. x_(j-1). A_j  (the j-th field type as a function of the previous fields)
+    fieldFamily :: Env -> Telescope' -> Int -> Val
+    fieldFamily env tys j = eval env $ foldr (\x -> Lam x Expl) (snd (tys !! j)) (map fst (take j tys))
+    -- Θ; G_j has local level j, H_j has local level n + j
+    famEnv = reverse $ [ fieldFamily envA as j | j <- [0 .. n - 1] ]
+                    ++ [ fieldFamily envB bs j | j <- [0 .. n - 1] ]
+    -- At depth `depth`, the variable of local level `l`
+    varAt depth l = Var (Ix (depth - l - 1))
+    -- At depth `depth`: G_j args = A_j[args],  H_j args = B_j[args]
+    fieldTyA, fieldTyB :: Int -> Int -> [Tm] -> Tm
+    fieldTyA depth j args = applySp (varAt depth j)       [ (t, Expl) | t <- args ]
+    fieldTyB depth j args = applySp (varAt depth (n + j)) [ (t, Expl) | t <- args ]
+
+    mkOeqTy a b = applySp (Prim Oeq) [(Type, Impl), (a, Expl), (b, Expl)]
+    mkCast a b t = applySp (Prim Cast) [(a, casticit), (b, casticit), (PropTm, Expl), (t, Expl)]
+
+    -- Θ, f_0 .. f_(k-1) ⊢ eqField k
+    --   = (x_0 : A_0) .. (x_(k-1) : A_(k-1)[x_<(k-1)]) -> A_k[xs] ~ B_k[ys]
+    eqField k = bindPrefix (2 * n + k) [] where
+      bindPrefix :: Int -> [Int] -> Tm
+      bindPrefix depth xLvls
+        | j == k    = mkOeqTy (fieldTyA depth k xs) (fieldTyB depth k (castForward depth xs))
+        | otherwise = Pi (fieldNames !! j) Expl (fieldTyA depth j xs) (bindPrefix (depth + 1) (xLvls ++ [depth]))
+        where j  = length xLvls
+              xs = map (varAt depth) xLvls
+    -- Θ, f_<k, x_<k ⊢ castForward depth xs = ys,  depth = 2n + 2k
+    --   y_j = cast [A_j[x_<j] ~> B_j[y_<j]] .. x_j
+    castForward depth xs = foldl step [] (zip [0 ..] xs) where
+      step ys (j, x) = ys ++ [mkCast (fieldTyA depth j (take j xs)) (fieldTyB depth j ys) x]
+
+
+wkTm :: HasGlobal => Env -> Lvl -> Lvl -> Tm -> Tm
+wkTm env l n t = quote (l + n) (eval env t)
 
 -- | Make sure `(length sp) <= arity f`
 evalFun :: HasGlobal => Env -> FuncDef -> [Clause] -> Spine -> Val
@@ -227,10 +284,11 @@ quote l t = case force t of
   VMkSig ts    -> MkSig $ map (second (quote l)) ts
   VProj v x sp -> quoteSp l (Proj (quote l v) x) sp
 
-quoteTele :: HasGlobal => Lvl -> Env -> [(Name, Ty)] -> [(Name, Ty)]
+quoteTele :: HasGlobal => Lvl -> Env -> Telescope' -> Telescope'
 quoteTele l env = \case
   [] -> []
   (x, t):ts -> (x, quote l (eval env t)) : quoteTele (l + 1) (VVar l : env) ts
+
 
 -- return the levels of bound variables introduced by the clause
 countVarPat :: Lvl -> Clause -> (Int, [Lvl])
@@ -277,7 +335,7 @@ fv dep = nub . \case
   VProj v x sp -> fv dep v ++ fvSp dep sp
   -- fv is only used in PMunification case "x = t", if type of x is a prop, then x should be a prop term already.
 
-fvTele :: HasGlobal => Lvl -> Env -> [(Name, Ty)] -> [Lvl]
+fvTele :: HasGlobal => Lvl -> Env -> Telescope' -> [Lvl]
 fvTele dep env = \case
   [] -> []
   (x, t):ts -> fv dep (eval env t) ++ fvTele (dep + 1) (env :> VVar dep) ts

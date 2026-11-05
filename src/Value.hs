@@ -7,6 +7,8 @@ import qualified Data.Map as M
 
 type Env     = [Val]
 type Spine   = [(Val, Icit)]
+type VTelescope = [(Name, Icit, VTy)]
+type VTelescope' = [(Name, VTy)]
 data Closure = Closure Env Tm deriving Show 
 
 type VTy     = Val
@@ -28,7 +30,7 @@ data Val
   | VPropTm 
   | VPrim Prim Spine 
 
-  | VSig Env [(Name, Ty)] -- A closure
+  | VSig Env Telescope' -- A closure
   | VMkSig [(Name, Val)]
   | VProj Val Name Spine
   deriving Show 
