@@ -135,6 +135,10 @@ check cxt t (VEl a asort) = case (t, force a) of
   (R.Absurd t, ty) -> do
     (t, t_ty) <- infer cxt t
     let cxt' = bind cxt "_absurd" t_ty
+    case unVEl $ force t_ty of 
+      VData d sp | not (isQIT d) && length sp == length (dataIx d) -> pure ()
+      _ -> throwIO $ Error cxt $ NotAbsurd (quoteCxt cxt (unVEl t_ty))
+      
     case splitCxt cxt' (lvl cxt' - 1) of
       Just [] -> pure $ Absurd t
       Just ctxs -> do
@@ -516,6 +520,7 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VEl (VPi x' i' (for
           (rps, rctx, rty) <- checkPat isCons ctx'' ps (VEl b_rest_updated bsort)
           pure ((p, i) : rps, rctx, rty)
         _ -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx $ unVEl a)
+    -- TODO: Only apd can match on path consturctor
     (Just (DefEq _)) | isQITCon c -> case M.lookup c (extraEq ?qitInfo) of
         Nothing -> error "checkPat: impossible"
         Just conEq -> case force $ unVEl a of
@@ -672,7 +677,7 @@ splitCxt cxt x = case force (findType cxt x) of
             _ -> error "splitCxt: impossible"
   
   x_ty@(VEl (VPrim Oeq sp@([]:>(a, _):>(lhs, _):>(rhs, _))) _)
-    | VData d d_arg <- force a 
+    | VData d d_arg <- force a
     -> might $ do 
       let cons = fromJust $ M.lookup (dataName d) (extraEq' ?qitInfo)
       fmap join $ forM cons $ \c -> do

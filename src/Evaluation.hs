@@ -102,6 +102,7 @@ vApp t u i = case force t of
   VPrim Cast vs  -> VPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
   VPrim Oeq  vs  -> vOeq (vs :> (u, i))
   VPrim p vs     -> VPrim p (vs :> (u, i))
+  VAbsurd v      -> VAbsurd v
   t              -> error $ "IMPOSSIBLE: " ++ show t
 
 vOeq :: HasGlobal => Spine -> Val

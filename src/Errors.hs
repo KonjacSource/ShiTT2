@@ -86,7 +86,7 @@ displayError file (Error cxt e) = do
           "Function icitness mismatch: expected %s, got %s.")
           (show i) (show i')
         NotAbsurd ty ->
-          "Type is not absurd: " ++ showTm cxt ty
+          "Type is not absurd-able: " ++ showTm cxt ty
         UnsolvedMetaInLambdaCase ->
           "Unsolved meta in lambda-case expression"
         LambdaCaseUnCover ->
