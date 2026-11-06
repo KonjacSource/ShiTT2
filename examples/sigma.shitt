@@ -14,3 +14,7 @@ def castId : {A B : Type} (p : sig { x : A; y : B }) (e : sig { x : A; y : B } ~
   = \_ _. rfl _
 
 def g : (s : sig {A : U; a : A}) -> s.A = \ s. s.a
+
+
+def sigmaOEq : {A B A1 B1 : Type} (eA : A ~ A1) (eB : B ~ B1) -> sig { x : A; y : B } ~ sig { x : A1; y : B1 } 
+  | eA eB = <eA; \_ . eB>

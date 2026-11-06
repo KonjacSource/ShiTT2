@@ -73,7 +73,7 @@ insert' cxt act = go =<< act where
       m <- freshMeta cxt
       let mv = evalCxt cxt m
       go (App t m Impl, VEl (b $$ mv) bs)
-    va -> pure (t, VEl va vas)
+    _ -> pure (t, VEl va vas) -- return the unforced type, to keep Oeq unreduced
 
 -- | Insert fresh implicit applications to a term which is not
 --   an implicit lambda (i.e. neutral).
@@ -483,7 +483,7 @@ checkPat isCons ctx [] (force -> ty)
         pure ((PatVar ('_':x), Impl): rps, rctx, rty)
       _ -> pure ([], ctx, ty)
   | otherwise = pure ([], ctx, ty)
-checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VEl (VPi x' i' (force -> a) b bsort) _) | i == i' =
+checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VEl (VPi x' i' a b bsort) _) | i == i' =
   case M.lookup c ?defs of
     Just (DefCons _) ->
       case force (unVEl a) of
@@ -524,7 +524,7 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VEl (VPi x' i' (for
     (Just (DefEq _)) | isQITCon c -> case M.lookup c (extraEq ?qitInfo) of
         Nothing -> error "checkPat: impossible"
         Just conEq -> case force $ unVEl a of
-          VPrim Oeq eq_arg@(reverse -> [(force -> VData d d_arg, Impl), (lhs, Expl), (rhs, Expl)]) | isQIT d -> do
+          VPrim Oeq eq_arg@(reverse -> [(force -> VData d d_arg, Impl), (lhs, Expl), (rhs, Expl)]) _ | isQIT d -> do
             -- TODO: refactor, merge with the above code.
             let c_tele = eqTel conEq
             let c_ix = eqIx conEq
@@ -534,7 +534,7 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VEl (VPi x' i' (for
             --   "Checking constructor " ++ c ++ "with tele: " ++ show c_tele ++ " and ix: " ++ show c_ix ++ "\n get c_ty: " ++ showVal ctx c_ty
             (ps', ctx', c_ty') <- checkPat True ctx c_arg c_ty
             eq_args' <- case force $ unVEl c_ty' of
-              VPrim Oeq sp@(reverse -> [(VData d' dsp, Impl), (lhs', Expl), (rhs', Expl)])
+              VPrim Oeq sp@(reverse -> [(VData d' dsp, Impl), (lhs', Expl), (rhs', Expl)]) _
                 | dataName d' == dataName d -> pure sp
               e -> throwIO $ DefError ctx $ PMNoneData (quoteCxt ctx' e)
               
@@ -563,14 +563,14 @@ checkPat isCons ctx ((Right i, R.RPat c c_arg):ps) (force -> VEl (VPi x' i' (for
           (ps', rest, rhs) <- checkPat isCons ctx' ps (VEl b' bsort)
           pure ((PatVar x, i):ps', rest, rhs)
       | otherwise     -> throwIO $ DefError ctx $ NameIsNotCons c Nothing
-checkPat isCons ctx ps@((Left x, p):ps') (force -> VEl (VPi x' i' (force -> a) b bsort) pisort)
+checkPat isCons ctx ps@((Left x, p):ps') (force -> VEl (VPi x' i' a b bsort) pisort)
   | i' == Impl && x == x' = checkPat isCons ctx ((Right Impl, p):ps') (VEl (VPi x' Impl a b bsort) pisort) -- Jump to the former clause
   | otherwise             = do
       let ctx' = bind ctx ('_':x') a
       let b' = b $$ VVar (lvl ctx)
       (rps, rctx, rty) <- checkPat isCons ctx' ps (VEl b' bsort)
       pure ((PatVar ('_':x'), Impl): rps, rctx, rty)
-checkPat isCons ctx ps@((Right Expl, _):ps') (force -> VEl (VPi x' Impl (force -> a) b bsort) pisort) = do
+checkPat isCons ctx ps@((Right Expl, _):ps') (force -> VEl (VPi x' Impl a b bsort) pisort) = do
     let ctx' = bind ctx ('_':x') a
     let b' = b $$ VVar (lvl ctx)
     (rps, rctx, rty) <- checkPat isCons ctx' ps (VEl b' bsort)
@@ -676,7 +676,7 @@ splitCxt cxt x = case force (findType cxt x) of
               pure [cxt'']
             _ -> error "splitCxt: impossible"
   
-  x_ty@(VEl (VPrim Oeq sp@([]:>(a, _):>(lhs, _):>(rhs, _))) _)
+  x_ty@(VEl (VPrim Oeq sp@([]:>(a, _):>(lhs, _):>(rhs, _)) _) _)
     | VData d d_arg <- force a
     -> might $ do 
       let cons = fromJust $ M.lookup (dataName d) (extraEq' ?qitInfo)
@@ -686,8 +686,9 @@ splitCxt cxt x = case force (findType cxt x) of
         -- split x to constructor c
         -- make a raw pattern
         let p = R.RPat c_name (makePs c_tele)
+        let voeq = force $ VPrim Oeq sp (RBlocked [])
         -- check the pattern against x's type
-        cp <- (checkPat False cxt [(Right Expl, p)] (VEl (VPi "_" Expl (VEl (VPrim Oeq sp) SProp) (Closure (env cxt) Type) SType) SType) >>= pure . Just) 
+        cp <- (checkPat False cxt [(Right Expl, p)] (VEl (VPi "_" Expl (VEl (voeq) SProp) (Closure (env cxt) Type) SType) SType) >>= pure . Just) 
                               `catch` \case
                                 DefError _ (UnsurePattern _ _) -> quitMight
                                 DefError _ (WrongPattern _ _) -> pure Nothing
@@ -730,7 +731,7 @@ genSpine cxt sp x = do
     case force $ unVEl (findType cxt x) of
       VData d d_arg ->
         pure (fst, isQIT d)
-      VPrim Oeq ([]:>(force -> VData d d_arg, _):>(lhs, _):>(rhs, _)) -> 
+      VPrim Oeq ([]:>(force -> VData d d_arg, _):>(lhs, _):>(rhs, _)) _ -> 
         pure (fst, False)
       ty -> error $ "impossible" ++ show ty
   where
@@ -794,7 +795,7 @@ generateApdClauses cxt f ps' = do
           let pats = [(fps, Expl), (x_pat, Impl), (y_pat, Impl), (h_pat, Expl)]
           let vals = [(fpsv, Expl), (x_val, Impl), (y_val, Impl), (h_val, Expl)]
           let cxt'xy = bind (bind cxt' "_x" a) "_y" a
-          let h_ty = vAppSp (VPrim Oeq []) $ [] :> (unVEl a, Impl) :> (x_val, Expl) :> (y_val, Expl)
+          let h_ty = vAppSp (VPrim Oeq [] RNeutral) $ [] :> (unVEl a, Impl) :> (x_val, Expl) :> (y_val, Expl)
           let cxt'xyh = bind cxt'xy "_h" (VEl h_ty SProp)
           -- cast (B x) (B y) (apd {A} {λ _ → U} {x} {y} (λ z → B z) h) (fps x) =_{B y} fps y
           pure $ ApdCls

@@ -24,7 +24,7 @@ data MatchResult a
 data MatchBlocker a
   = BVar Lvl a -- ^ Stucking variable. Mark for QIT checking
   | BFunc FuncDef
-  | BFlex MetaVar
+  | BFlex [MetaVar]
   | BAbsurd  -- ^ Stucking on an absurd term (nothing to do with absurd pattern)
   | BLamCase
   | BCast
@@ -34,7 +34,7 @@ data MatchBlocker a
 -- | Note: Although pattern matching in this project always occurs at the top level,
 -- | we may extend the system to add modules or inline `match` expressions.
 match1 :: HasGlobal => Env -> Pattern -> Val -> MatchResult PatternWithMark
-match1 env pat val = case (pat, val) of
+match1 env pat val = case (pat, force val) of
   (PatVar x, v)             -> MatchSuc (v : env)
   (PatCon c ps, VCons c_def args)
     | c == consName c_def   -> fmap (PatCon c) (match env ps args)
@@ -42,17 +42,17 @@ match1 env pat val = case (pat, val) of
   (PatCon _ _, VAbsurd _)   -> MatchStuck BAbsurd
   (PatCon _ _, VRigid x _)  -> MatchStuck (BVar x (PatMark ()))
   (PatCon _ _, VFunc f _)   -> MatchStuck (BFunc f)
-  (PatCon _ _, VHold f _ Nothing) -> MatchStuck (BFunc f)
-  (PatCon _ _, VHold f _ (Just m)) -> MatchStuck (BFlex m)
-  (PatCon _ _, VFlex m _)   -> MatchStuck (BFlex m)
+  (PatCon _ _, VHold f _ (RBlocked m)) -> MatchStuck (BFlex m)
+  (PatCon _ _, VHold f _ _) -> MatchStuck (BFunc f)
+  (PatCon _ _, VFlex m _)   -> MatchStuck (BFlex [m])
   (PatCon _ _, VData _ _)   -> error "impossible"
   (PatCon _ _, VLam {})     -> error "impossible"
   (PatCon _ _, VPi {})      -> error "impossible"
   (PatCon _ _, VPropTm)     -> error "impossible"
-  (PatCon _ _, VPrim Cast _) -> MatchStuck BCast
-  (PatCon _ _, VPrim Apd _)  -> error "impossible"
-  (PatCon _ _, VPrim Oeq _)  -> error "impossible"
-  (PatCon _ _, VPrim Rfl _)  -> error "impossible"
+  (PatCon _ _, VPrim Cast _ _) -> MatchStuck BCast
+  (PatCon _ _, VPrim Apd _ _)  -> error "impossible"
+  (PatCon _ _, VPrim Oeq _ _)  -> error "impossible"
+  (PatCon _ _, VPrim Rfl _ _)  -> error "impossible"
   (PatCon _ _, VSort _)       -> error "impossible"
   (PatCon _ _, VMkSig ts)    -> MatchFailed -- No tuple pattern
   (PatCon _ _, VSig {})      -> error "impossible"
@@ -99,16 +99,30 @@ vApp t u i = case force t of
   VPathCons c sp -> VPathCons c (sp :> (u, i))
   VData d sp     -> VData d (sp :> (u,i))
   VProj v x sp   -> VProj v x (sp :> (u, i))
-  VPrim Cast vs  -> VPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
-  VPrim Oeq  vs  -> vOeq (vs :> (u, i))
-  VPrim p vs     -> VPrim p (vs :> (u, i))
+  VPrim Cast vs _ -> mkPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
+  VPrim Oeq  vs _ -> mkPrim Oeq (vs :> (u, i)) -- Oeq is reduced lazily in force, see reduceOeq
+  VPrim p vs r   -> VPrim p (vs :> (u, i)) r
   VAbsurd v      -> VAbsurd v
   t              -> error $ "IMPOSSIBLE: " ++ show t
+  where
+    mkPrim p sp = VPrim p sp (reducePrim p sp)
+    reducePrim :: HasGlobal => Prim -> Spine -> Reduced
+    reducePrim Oeq sp@([]:>(_, Impl):>(t, Expl):>(u, Expl)) = case reduceOeq sp of
+      Just r  -> RReduced r
+      Nothing -> case blockers (force t) ++ blockers (force u) of
+        [] -> RNeutral
+        ms -> RBlocked ms
+    reducePrim _ _ = RNeutral
 
-vOeq :: HasGlobal => Spine -> Val
-vOeq ([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case (force a, force t, force u) of 
-  (a, t, u) -> VPrim Oeq ([]:>(a, Impl):>(t, Expl):>(u, Expl))
-vOeq vs = VPrim Oeq vs
+-- | One step of Oeq computation. Nothing if it does not reduce (yet).
+-- Oeq is not reduced during evaluation, but in `force`, so that the unreduced form is kept
+-- for unification (e.g. `Oeq {U} ?A ?B =?= Oeq {U} (sig ..) (sig ..)`), and a stuck Oeq is
+-- re-computed once the blocking metas are solved.
+reduceOeq :: HasGlobal => Spine -> Maybe Val
+reduceOeq ([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case (force a, force t, force u) of
+  (a, VSig envt telet, VSig envu teleu) -> oeqTeleTy (envt, telet) (envu, teleu)
+  _ -> Nothing
+reduceOeq _ = Nothing
 
 -- | Generating a sigma type, recording the equality between two telescopes.
 -- | Δ1 = (x_0 : A_0) (x_1 : A_1[x_0]) ... (x_(n-1) : A_(n-1)[x_<(n-1)])
@@ -122,7 +136,6 @@ vOeq vs = VPrim Oeq vs
 --   where s_j is the sort of both A_j and B_j, f_j is the j-th field of this sig, and
 --     y_j = cast {A_j[x_<j]} {B_j[y_<j]} (f_j x_<j) x_j   if s_j = Type
 --     y_j = ..                                              if s_j = Prop  (cast for prop is postulated)
---   Each y_j is bound once by a `let` in front of the equation, so the field types stay linear in size.
 -- | Nothing if it does not reduce: the field names differ, or some field sorts are not solved yet or differ.
 oeqTeleTy :: HasGlobal => (Env, Telescope') -> (Env, Telescope') -> Maybe VTy
 oeqTeleTy (envA, as) (envB, bs)
@@ -181,14 +194,14 @@ wkTm env l n t = quote (l + n) (eval env t)
 
 -- | Make sure `(length sp) <= arity f`
 evalFun :: HasGlobal => Env -> FuncDef -> [Clause] -> Spine -> Val
-evalFun env f [] sp = VHold f sp Nothing -- No matchable clause yet.
+evalFun env f [] sp = VHold f sp RNeutral -- No matchable clause yet.
 evalFun env f (c:cs) sp
   | length sp < arity f = VFunc f sp -- Wait
   | otherwise = -- `length sp == arity f`
       case match env (clausePatterns c) sp of
         MatchFailed          -> evalFun env f cs sp --Failed
-        MatchStuck (BFlex m) -> VHold f sp (Just m)       -- Stucked by a meta
-        MatchStuck _         -> VHold f sp Nothing
+        MatchStuck (BFlex m) -> VHold f sp (RBlocked m)       -- Stucked by a meta
+        MatchStuck _         -> VHold f sp RNeutral
         MatchSuc env'        -> eval env' (clauseRhs c) -- Succeeded
 
 -- Return Nothing if stucked or no matching clause
@@ -244,8 +257,8 @@ instance Eval Tm Val where
                             Nothing -> error $ "eval: impossible " ++ show f
     TmSort s            -> VSort s
     PropTm              -> VPropTm
-    Prim Cast           -> VPrim Cast []
-    Prim p              -> VPrim p []
+    Prim Cast           -> VPrim Cast [] RNeutral
+    Prim p              -> VPrim p [] RNeutral
     Sig tys             -> VSig env tys
     MkSig ts            -> VMkSig (map (second (eval env)) ts)
     Proj t x            -> vProj (eval env t) x
@@ -264,19 +277,25 @@ vProj v x = VProj v x []
 evalCxt :: (HasGlobal, Eval a b) => Cxt -> a -> b
 evalCxt ctx = eval (env ctx)
 
+-- Force is not free anymore, it is costly.
 class Force c a | a -> c where 
   force :: c => a -> a
 
 instance Force HasGlobal Val where
-  force = \case
+  force v = case v of
+    VPrim _ _ (RReduced v) -> force v
+    VHold _ _ (RReduced v) -> force v
+    VPrim Oeq sp (RBlocked m)
+      | allSolved' m
+      , Just r <- reduceOeq sp -> force r
     VFlex m sp | Solved t <- lookupMeta m -> force (vAppSp t sp) -- t is in empty env
-    VHold f sp (Just m)
-      | Solved _ <- lookupMeta m -> vAppSp (VFunc f []) sp
+    VHold f sp (RBlocked m)
+      | allSolved' m -> force (vAppSp (VFunc f []) sp)
     VProj v x sp -> case force v of
       VMkSig fs -> force (vAppSp (fromJust $ lookup x fs) sp)
       VPropTm   -> VPropTm
       v'        -> VProj v' x sp
-    t -> t
+    v' -> v'
   
 instance Force HasGlobal VType where 
   force (VEl t s) = VEl (force t) (force s)
@@ -296,7 +315,7 @@ class Quote a b | a -> b where
   quote :: HasGlobal => Lvl -> a -> b
 
 instance Quote Val Tm where
-  quote l t = case force t of
+  quote l t = case force t of -- keep Oeq unreduced
     VFlex m sp -> quoteSp l (Meta m) sp
     VRigid x sp  -> quoteSp l (Var (lvl2Ix l x)) sp
     VLam x i t   -> Lam x i (quote (l + 1) (t $$ VVar l))
@@ -310,7 +329,7 @@ instance Quote Val Tm where
     VPathCons f sp -> quoteSp l (Call (eqNameDef f)) sp
     VSort s      -> TmSort s
     VPropTm      -> PropTm
-    VPrim p sp   -> quoteSp l (Prim p) sp
+    VPrim p sp r -> quoteSp l (Prim p) sp
     VSig env tys -> Sig $ quoteTele l env tys
     VMkSig ts    -> MkSig $ map (second (quote l)) ts
     VProj v x sp -> quoteSp l (Proj (quote l v) x) sp
@@ -366,7 +385,7 @@ fv dep = nub . \case
   VHold _ sp _-> fvSp dep sp
   VData _ sp -> fvSp dep sp
   VPathCons _ sp -> fvSp dep sp
-  VPrim _ sp -> fvSp dep sp
+  VPrim _ sp _ -> fvSp dep sp
   VSort _ -> []
   VPropTm -> error "fv: impossible"
   VSig env tys -> fvTele dep env tys

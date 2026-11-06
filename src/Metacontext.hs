@@ -71,10 +71,14 @@ reset = do
   writeIORef smcxt mempty
   writeIORef opnCls M.empty
 
-
 allSolved :: IO Bool
 allSolved = do
   ms <- readIORef mcxt
   mss <- readIORef smcxt
   pure $ IM.null (IM.filter (\case Solved _ -> False; Unsolved -> True) ms)
       && IM.null (IM.filter (\case SSolved _ -> False; SUnsolved -> True) mss)
+
+allSolved' :: [MetaVar] -> Bool
+allSolved' = all (\m -> case lookupMeta m of
+  Solved _ -> True
+  Unsolved -> False)

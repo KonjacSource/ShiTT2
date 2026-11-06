@@ -21,7 +21,7 @@ data Val
   | VPi Name Icit ~VType {-# unpack #-} Closure Sort
   | VAbsurd Val
   | VFunc FuncDef Spine -- TODO: Change the FuncDefs to Name. Sometimes the FuncDef might be out of date.
-  | VHold FuncDef Spine (Maybe MetaVar) 
+  | VHold FuncDef Spine ~Reduced
   -- ^ Clauses are exhausted, but the function is still stucked. We store the meta variable if the function is stucked on a meta
   | VData DataDef Spine 
   | VCons ConsDef Spine
@@ -29,12 +29,20 @@ data Val
 
   | VSort Sort
   | VPropTm 
-  | VPrim Prim Spine 
+  | VPrim Prim Spine ~Reduced
 
   | VSig Env Telescope' -- A closure
   | VMkSig [(Name, Val)]
   | VProj Val Name Spine
   deriving Show 
+
+-- | We may have some values with computational rules, such as Oeq, Cast, etc
+--   Force may trigger the computation of these primitives.
+data Reduced
+  = RReduced Val
+  | RBlocked [MetaVar]
+  | RNeutral -- ^ Neutral (including not fully applied)
+  deriving Show
 
 pattern VVar :: Lvl -> Val
 pattern VVar x = VRigid x []
@@ -72,3 +80,10 @@ eqCons2Defs EqCons{..} = EqConsDef
 instance SortOf VType where
   sortOf (VEl _ s) = s
 
+blockers :: Val -> [MetaVar]
+blockers = \case
+  VFlex m _               -> [m]
+  VHold _ _ (RBlocked ms) -> ms
+  VPrim _ _ (RBlocked ms) -> ms
+  VProj v _ _             -> blockers v
+  _                       -> []

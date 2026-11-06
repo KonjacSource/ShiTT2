@@ -203,12 +203,12 @@ checkApdCls srcpos defs qiti f (RApdClause (R.RPat f' ps) pxye rhs)
         let e = y + 1
         let bx = b $$ VVar x -- b x
         let by = b $$ VVar y -- b y
-        let et = vAppSp (VPrim Oeq []) ([] :> (unVEl a, Impl) :> (VVar x, Expl) :> (VVar y, Expl)) -- x ~{a} y
+        let et = vAppSp (VPrim Oeq [] RNeutral) ([] :> (unVEl a, Impl) :> (VVar x, Expl) :> (VVar y, Expl)) -- x ~{a} y
         let fps = PatFunc (funcName f) ps' -- f ps 
         let fpsv = p2v (lvl cxt) fps       -- f ps
-        let lhs_eq = vAppSp (VPrim Cast []) -- cast [b x] [b y] (apd B e) (f ps x)
+        let lhs_eq = vAppSp (VPrim Cast [] RNeutral) -- cast [b x] [b y] (apd B e) (f ps x)
                     ([] :> (bx, casticit) :> (by, casticit)
-                        :> (vAppSp (VPrim Apd []) -- This part is proof-irrelevant actually.
+                        :> (vAppSp (VPrim Apd [] RNeutral) -- This part is proof-irrelevant actually.
                               ([] :> (unVEl $ a, Impl) :> (VLam "_" Expl (Closure [] Type), Impl)
                                   :> (VVar x, Impl) :> (VVar y, Impl)
                                   :> (VLam "x" Expl b, Expl) :> (VVar e, Expl))
@@ -216,7 +216,7 @@ checkApdCls srcpos defs qiti f (RApdClause (R.RPat f' ps) pxye rhs)
                         :> (vApp fpsv (VVar x) Expl, Expl))
         let rhs_eq = vApp fpsv (VVar y) Expl -- f ps y
         -- rhs of clause, not the rhs of the equation
-        let rhs_ty = vAppSp (VPrim Oeq []) ([] :> (by, Impl) :> (lhs_eq, Expl) :> (rhs_eq, Expl)) -- lhs_eq ~{b y} rhs_eq : Prop
+        let rhs_ty = vAppSp (VPrim Oeq [] RNeutral) ([] :> (by, Impl) :> (lhs_eq, Expl) :> (rhs_eq, Expl)) -- lhs_eq ~{b y} rhs_eq : Prop
         let xenv = x
         let yenv =  xenv + 1
         let eenv = yenv + 1

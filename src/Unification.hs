@@ -89,7 +89,7 @@ rename m pren v = go pren v where
     VPathCons f sp -> goSp pren (Call (eqNameDef f)) sp
     VSort s     -> pure $ TmSort s
     VPropTm     -> pure PropTm
-    VPrim p sp  -> goSp pren (Prim p) sp
+    VPrim p sp _ -> goSp pren (Prim p) sp
     VSig env tys -> Sig <$> goTele pren env tys
     VMkSig ts   -> MkSig <$> mapM (\(x, t) -> (,) x <$> go pren t) ts
     VProj v x sp -> do 
@@ -146,7 +146,7 @@ unifySort cxt s1 s2 = case (force s1, force s2) of
   (SProp, SProp) -> pure ()
   (SType, SProp) -> throwIO UnifyError
   (SProp, SType) -> throwIO UnifyError
-  
+
   (SMeta m, s2) | ?unifyOrConv -> modifyIORef' smcxt $ IM.insert (unSMetaVar m) (SSolved s2)
   (s1, SMeta m) | ?unifyOrConv -> modifyIORef' smcxt $ IM.insert (unSMetaVar m) (SSolved s1)
   (s1, s2) -> error $ "TODO: " ++ show s1 ++ " ~ " ++ show s2
@@ -187,11 +187,12 @@ unify cxt@Cxt{..} t u ty = do
       (VPropTm    , _       , _) -> pure ()
       (_          , VPropTm , _) -> pure ()
       (VSort s    , VSort s', _) -> unifySort cxt s s'
-      (VPrim Cast vs, t     , _)
+      (VPrim Oeq sp _, VPrim Oeq sp' _, _) -> unifySp cxt sp sp' (evalCxt cxt (unEl oeqTy))
+      (VPrim Cast vs _, t     , _)
         | unsafePerformIO $ unifyCast vs t -> pure ()
-      (t, VPrim Cast vs     , _)
+      (t, VPrim Cast vs _     , _)
         | unsafePerformIO $ unifyCast vs t -> pure ()
-      (VPrim p vs, VPrim p' vs' , _)
+      (VPrim p vs _, VPrim p' vs' _, _)
         | p == p' -> unifySp cxt vs vs' (evalCxt cxt (unEl $ getPrimTy p))
       (VSig env tys, VSig env' tys', _) -> unifyTele cxt env tys env' tys'
       (VProj v x vs, VProj v' x' vs', ty)
@@ -314,7 +315,7 @@ inferNeu cxt t = case force t of
     vty <- inferNeu cxt v
     vxty <- getProjTy' vty v x
     inferNeuSp cxt (unVEl vxty) sp
-  VPrim p sp   -> inferNeuSp cxt (evalCxt cxt (unEl $ getPrimTy p)) sp
+  VPrim p sp _ -> inferNeuSp cxt (evalCxt cxt (unEl $ getPrimTy p)) sp
   _            -> error "impossible: not a neutral term" 
 
 -- ty is the type of the head of the spine
