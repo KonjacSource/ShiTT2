@@ -163,7 +163,12 @@ unify cxt@Cxt{..} t u ty = do
 
   where
     unifyRelevant :: UnifyConfig => Val -> Val -> VTy -> Sort -> IO ()
-    unifyRelevant t u ty sort = case (force t, force u, force ty) of
+    unifyRelevant t u ty sort = case (force' t, force' u) of 
+      (VPrim Oeq sp _, VPrim Oeq sp' _) -> unifySp cxt sp sp' (evalCxt cxt (unEl oeqTy))
+      (t, u) -> unifyRelevant' t u ty sort
+
+    unifyRelevant' :: UnifyConfig => Val -> Val -> VTy -> Sort -> IO ()
+    unifyRelevant' t u ty sort = case (force t, force u, force ty) of
       (VLam _ _ t , VLam _ _ t'    , VPi x _ a b bsort) -> unify (bind cxt x a) (t $$ VVar lvl) (t' $$ VVar lvl) (VEl (b $$ VVar lvl) bsort)
       (t          , VLam _ i t'    , VPi x _ a b bsort) -> unify (bind cxt x a) (vApp t (VVar lvl) i) (t' $$ VVar lvl) (VEl (b $$ VVar lvl) bsort)
       (VLam _ i t , t'             , VPi x _ a b bsort) -> unify (bind cxt x a) (t $$ VVar lvl) (vApp t' (VVar lvl) i) (VEl (b $$ VVar lvl) bsort)

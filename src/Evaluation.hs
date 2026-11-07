@@ -32,40 +32,40 @@ data MatchBlocker a
   deriving Functor
 
 -- | Note: Although pattern matching in this project always occurs at the top level,
--- | we may extend the system to add modules or inline `match` expressions.
+--   we may extend the system to add modules or inline `match` expressions.
 match1 :: HasGlobal => Env -> Pattern -> Val -> MatchResult PatternWithMark
 match1 env pat val = case (pat, force val) of
-  (PatVar x, v)             -> MatchSuc (v : env)
+  (PatVar x, v)                        -> MatchSuc (v : env)
   (PatCon c ps, VCons c_def args)
-    | c == consName c_def   -> fmap (PatCon c) (match env ps args)
-    | otherwise             -> MatchFailed
-  (PatCon _ _, VAbsurd _)   -> MatchStuck BAbsurd
-  (PatCon _ _, VRigid x _)  -> MatchStuck (BVar x (PatMark ()))
-  (PatCon _ _, VFunc f _)   -> MatchStuck (BFunc f)
+    | c == consName c_def              -> fmap (PatCon c) (match env ps args)
+    | otherwise                        -> MatchFailed
+  (PatCon _ _, VAbsurd _)              -> MatchStuck BAbsurd
+  (PatCon _ _, VRigid x _)             -> MatchStuck (BVar x (PatMark ()))
+  (PatCon _ _, VFunc f _)              -> MatchStuck (BFunc f)
   (PatCon _ _, VHold f _ (RBlocked m)) -> MatchStuck (BFlex m)
-  (PatCon _ _, VHold f _ _) -> MatchStuck (BFunc f)
-  (PatCon _ _, VFlex m _)   -> MatchStuck (BFlex [m])
-  (PatCon _ _, VData _ _)   -> error "impossible"
-  (PatCon _ _, VLam {})     -> error "impossible"
-  (PatCon _ _, VPi {})      -> error "impossible"
-  (PatCon _ _, VPropTm)     -> error "impossible"
-  (PatCon _ _, VPrim Cast _ _) -> MatchStuck BCast
-  (PatCon _ _, VPrim Apd _ _)  -> error "impossible"
-  (PatCon _ _, VPrim Oeq _ _)  -> error "impossible"
-  (PatCon _ _, VPrim Rfl _ _)  -> error "impossible"
-  (PatCon _ _, VSort _)       -> error "impossible"
-  (PatCon _ _, VMkSig ts)    -> MatchFailed -- No tuple pattern
-  (PatCon _ _, VSig {})      -> error "impossible"
-  (PatCon _ _, VProj {})     -> MatchStuck BProj
+  (PatCon _ _, VHold f _ _)            -> MatchStuck (BFunc f)
+  (PatCon _ _, VFlex m _)              -> MatchStuck (BFlex [m])
+  (PatCon _ _, VData _ _)              -> error "impossible"
+  (PatCon _ _, VLam {})                -> error "impossible"
+  (PatCon _ _, VPi {})                 -> error "impossible"
+  (PatCon _ _, VPropTm)                -> error "impossible"
+  (PatCon _ _, VPrim Cast _ _)         -> MatchStuck BCast
+  (PatCon _ _, VPrim Apd _ _)          -> error "impossible"
+  (PatCon _ _, VPrim Oeq _ _)          -> error "impossible"
+  (PatCon _ _, VPrim Rfl _ _)          -> error "impossible"
+  (PatCon _ _, VSort _)                -> error "impossible"
+  (PatCon _ _, VMkSig ts)              -> MatchFailed -- No tuple pattern
+  (PatCon _ _, VSig {})                -> error "impossible"
+  (PatCon _ _, VProj {})               -> MatchStuck BProj
   (PatCon c ps, VPathCons p args) -- Lean's lesson: large elim over prop level values should not be allowed. 
                                   -- But here is ok, because the only way to match a path constructor is using `apd`, which is in prop verse.
-    | length ps == length args && c == eqNameDef p ->  fmap (PatCon c) (match env ps args)
-  (PatCon c ps, VPathCons p args) -> MatchFailed
+    | length ps == length args && c == eqNameDef p -> fmap (PatCon c) (match env ps args)
+  (PatCon c ps, VPathCons p args)      -> MatchFailed
   (PatFunc f ps, VFunc f' args)
     | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match env ps args)
   (PatFunc f ps, VHold f' args _)
     | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match env ps args)
-  (PatFunc f ps, _) -> MatchFailed -- for apd clause, we consider function names as codes 
+  (PatFunc f ps, _)                    -> MatchFailed -- for apd clause, we consider function names as codes 
 
 match :: HasGlobal => Env -> [(Pattern, Icit)] -> Spine -> MatchResult (PatternTele ())
 match env pats vals = go env pats (reverse vals) where
@@ -125,18 +125,18 @@ reduceOeq ([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case (force a, force t, force 
 reduceOeq _ = Nothing
 
 -- | Generating a sigma type, recording the equality between two telescopes.
--- | Δ1 = (x_0 : A_0) (x_1 : A_1[x_0]) ... (x_(n-1) : A_(n-1)[x_<(n-1)])
--- | Δ2 = (x_0 : B_0) (x_1 : B_1[x_0]) ... (x_(n-1) : B_(n-1)[x_<(n-1)])     -- field names must agree
--- | we get
---   sig
---   { x_0 : A_0 ~{s_0} B_0
---   ; x_1 : (x_0 : A_0) -> A_1[x_0] ~{s_1} B_1[y_0]
---   ; x_2 : (x_0 : A_0) (x_1 : A_1[x_0]) -> A_2[x_0, x_1] ~{s_2} B_2[y_0, y_1]
---   ...}
+-- > Δ1 = (x_0 : A_0) (x_1 : A_1[x_0]) ... (x_(n-1) : A_(n-1)[x_<(n-1)])
+-- > Δ2 = (x_0 : B_0) (x_1 : B_1[x_0]) ... (x_(n-1) : B_(n-1)[x_<(n-1)])     -- field names must agree
+--   we get
+-- > sig
+-- > { x_0 : A_0 ~{s_0} B_0
+-- > ; x_1 : (x_0 : A_0) -> A_1[x_0] ~{s_1} B_1[y_0]
+-- > ; x_2 : (x_0 : A_0) (x_1 : A_1[x_0]) -> A_2[x_0, x_1] ~{s_2} B_2[y_0, y_1]
+-- > ...}
 --   where s_j is the sort of both A_j and B_j, f_j is the j-th field of this sig, and
---     y_j = cast {A_j[x_<j]} {B_j[y_<j]} (f_j x_<j) x_j   if s_j = Type
---     y_j = ..                                              if s_j = Prop  (cast for prop is postulated)
--- | Nothing if it does not reduce: the field names differ, or some field sorts are not solved yet or differ.
+-- >   y_j = cast {A_j[x_<j]} {B_j[y_<j]} (f_j x_<j) x_j   if s_j = Type
+-- >   y_j = ..                                              if s_j = Prop  (cast for prop is postulated)
+--   return Nothing if it does not reduce: the field names differ, or some field sorts are not solved yet or differ.
 oeqTeleTy :: HasGlobal => (Env, Telescope') -> (Env, Telescope') -> Maybe VTy
 oeqTeleTy (envA, as) (envB, bs)
   | fieldNames == map fst bs
@@ -279,25 +279,33 @@ evalCxt ctx = eval (env ctx)
 
 -- Force is not free anymore, it is costly.
 class Force c a | a -> c where 
+  -- | Weak version of force, keeps the folded form of Oeq, Cast, and VHold.
+  --   As force in cctt
+  force' :: c => a -> a 
+  -- | Fully force, as forceFull in cctt
   force :: c => a -> a
 
 instance Force HasGlobal Val where
-  force v = case v of
-    VPrim _ _ (RReduced v) -> force v
-    VHold _ _ (RReduced v) -> force v
+  force' v = case v of 
     VPrim Oeq sp (RBlocked m)
       | allSolved' m
-      , Just r <- reduceOeq sp -> force r
+      , Just r <- reduceOeq sp -> VPrim Oeq sp (RReduced r)
     VFlex m sp | Solved t <- lookupMeta m -> force (vAppSp t sp) -- t is in empty env
     VHold f sp (RBlocked m)
-      | allSolved' m -> force (vAppSp (VFunc f []) sp)
+      | allSolved' m -> VHold f sp . RReduced $ force (vAppSp (VFunc f []) sp)
     VProj v x sp -> case force v of
       VMkSig fs -> force (vAppSp (fromJust $ lookup x fs) sp)
       VPropTm   -> VPropTm
       v'        -> VProj v' x sp
+    v -> v
+
+  force v = case force' v of
+    VPrim _ _ (RReduced v) -> force v
+    VHold _ _ (RReduced v) -> force v
     v' -> v'
   
 instance Force HasGlobal VType where 
+  force' (VEl t s) = VEl (force' t) (force' s)
   force (VEl t s) = VEl (force t) (force s)
 
 lvl2Ix :: Lvl -> Lvl -> Ix
@@ -436,6 +444,7 @@ updateSp ctx = \case
   sp :> (v, i) -> updateSp ctx sp :> (updateVal ctx v, i)
 
 instance Force () Sort where 
+  force' = force
   force = \case 
     SMeta m | SSolved s <- lookupSMeta m -> s
             | otherwise -> SMeta m
