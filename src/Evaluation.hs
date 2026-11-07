@@ -290,7 +290,7 @@ instance Force HasGlobal Val where
     VPrim Oeq sp (RBlocked m)
       | allSolved' m
       , Just r <- reduceOeq sp -> VPrim Oeq sp (RReduced r)
-    VFlex m sp | Solved t <- lookupMeta m -> force (vAppSp t sp) -- t is in empty env
+    VFlex m sp | Solved t <- lookupMeta m -> force' (vAppSp t sp) -- t is in empty env
     VHold f sp (RBlocked m)
       | allSolved' m -> VHold f sp . RReduced $ force (vAppSp (VFunc f []) sp)
     VProj v x sp -> case force v of
@@ -323,7 +323,7 @@ class Quote a b | a -> b where
   quote :: HasGlobal => Lvl -> a -> b
 
 instance Quote Val Tm where
-  quote l t = case force t of -- keep Oeq unreduced
+  quote l t = case force' t of -- keep Oeq unreduced
     VFlex m sp -> quoteSp l (Meta m) sp
     VRigid x sp  -> quoteSp l (Var (lvl2Ix l x)) sp
     VLam x i t   -> Lam x i (quote (l + 1) (t $$ VVar l))

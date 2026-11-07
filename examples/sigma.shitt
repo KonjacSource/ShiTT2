@@ -18,3 +18,16 @@ def g : (s : sig {A : U; a : A}) -> s.A = \ s. s.a
 
 def sigmaOEq : {A B A1 B1 : Type} (eA : A ~ A1) (eB : B ~ B1) -> sig { x : A; y : B } ~ sig { x : A1; y : B1 } 
   | eA eB = <eA; \_ . eB>
+
+
+def castPat : {A B : Type} (e : sig { x : A; y : B } ~ sig { x : A; y : B }) (p : sig { x : A; y : B }) -> sig { x : A; y : B }
+  | e p = cast e p
+
+def useEq : {A B : Type} (e : sig { x : A; y : B } ~ sig { x : A; y : B }) -> A ~ A
+  | e = e.x
+
+def useEq2 : {A B : Type} (e : sig { x : A; y : B } ~ sig { x : A; y : B }) -> A ~ A
+  = \ e . e.x
+
+def sigmaOEq : {A B A1 B1 : Type} (eA : A ~ A1) (eB : B ~ B1) -> sig { x : A; y : B } ~ sig { x : A1; y : B1 }
+  | eA eB = <eA; \ _ . eB>
