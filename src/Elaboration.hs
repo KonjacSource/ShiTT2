@@ -98,7 +98,9 @@ insertUntilName cxt name act = go =<< act where
       throwIO $ Error cxt $ NoNamedImplicitArg name
 
 check :: HasGlobal => Cxt -> R.Tm -> VType -> IO Tm
-check cxt t (VEl a asort) = case (t, force a) of
+check cxt t (VEl a asort) = 
+  let a_wkfc = force' a in
+  case (t, force a_wkfc) of
 
   (R.PrintCxt t, a) -> do
     putStrLn (showCxt cxt)
@@ -106,10 +108,10 @@ check cxt t (VEl a asort) = case (t, force a) of
     -- NOTE. there might be some unsolved metas in the @a@ which can be solved soon after the check. 
     -- But the printing here still contains the unsolved metas.
     putStrLn $ showVal cxt a ++ "\n\n"
-    check cxt t (VEl a asort)
+    check cxt t (VEl a_wkfc asort)
 
   (R.SrcPos pos t, a) ->
-    check (cxt {pos = pos}) t (VEl a asort)
+    check (cxt {pos = pos}) t (VEl a_wkfc asort)
 
   -- If the icitness of the lambda matches the Pi type, check as usual
   (R.Lam x i t, VPi x' i' a b bsort) | either (\x -> x == x' && i' == Impl) (==i') i -> do
@@ -129,7 +131,7 @@ check cxt t (VEl a asort) = case (t, force a) of
     let va = evalCxt cxt a
     t <- check cxt t va
     let vt = evalCxt cxt t
-    u <- check (define cxt x vt va) u (VEl a' asort)
+    u <- check (define cxt x vt va) u (VEl a_wkfc asort)
     pure (Let x a t u)
 
   (R.Absurd t, ty) -> do
@@ -154,9 +156,9 @@ check cxt t (VEl a asort) = case (t, force a) of
   (R.Hole, a) ->
     freshMeta cxt
 
-  (t, expected) -> do
+  (t, _) -> do
     (t, inferred) <- insert cxt $ infer cxt t
-    unifyCatchTy cxt (VEl expected asort) inferred
+    unifyCatchTy cxt (VEl a_wkfc asort) inferred
     pure t
   where
     checkTele :: [(Name, R.Tm)] -> Env -> Telescope' -> IO [(Name, Tm)]
@@ -466,8 +468,8 @@ checkCls ctx func_name func_typ (R.RClause rps rhs) = do
 -- Throws `Error`, throw `DefError _ $ WrongPattern _ _` for absurd patterns, `DefError _ $ UnsurePattern _ _` for IDK patterns.
 -- TODO : Change the return type to `IO ([(Pattern, Icit)], Spine, Cxt, VTy)`
 checkPat :: HasGlobal => Bool -> Cxt -> R.RPatterns -> VType -> IO ([(Pattern, Icit)], Cxt, VType)
-checkPat isCons ctx [] (force -> ty)
-  | isCons = case unVEl ty of
+checkPat isCons ctx [] (force' -> ty)
+  | isCons = case force $ unVEl ty of
     -- If we are elaborating constructor patterns, we need to make sure all implicit patterns are filled.
     -- i.e.
     -- data Id : U -> U -> U where 

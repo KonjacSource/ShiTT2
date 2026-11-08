@@ -1,0 +1,7 @@
+-- ?T is solved to the type of e; the solution must keep the Oeq head
+def idP : {T : Prop} (t : T) -> T
+  | t = t
+
+def castViaId : {A B : Type} (e : sig { x : A; y : B } ~ sig { x : A; y : B }) (p : sig { x : A; y : B }) -> sig { x : A; y : B }
+  | e p = cast (idP e) p
+

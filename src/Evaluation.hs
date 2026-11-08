@@ -34,8 +34,8 @@ data MatchBlocker a
 -- | Note: Although pattern matching in this project always occurs at the top level,
 --   we may extend the system to add modules or inline `match` expressions.
 match1 :: HasGlobal => Env -> Pattern -> Val -> MatchResult PatternWithMark
-match1 env pat val = case (pat, force val) of
-  (PatVar x, v)                        -> MatchSuc (v : env)
+match1 env pat val = let val_wkfc = force' val in case (pat, force val_wkfc) of
+  (PatVar x, v)                        -> MatchSuc (val_wkfc : env)
   (PatCon c ps, VCons c_def args)
     | c == consName c_def              -> fmap (PatCon c) (match env ps args)
     | otherwise                        -> MatchFailed
@@ -71,7 +71,7 @@ match :: HasGlobal => Env -> [(Pattern, Icit)] -> Spine -> MatchResult (PatternT
 match env pats vals = go env pats (reverse vals) where
   go :: HasGlobal => Env -> [(Pattern, Icit)] -> Spine -> MatchResult (PatternTele ())
   go env [] [] = MatchSuc env
-  go env pats@((p, i):ps) vals@(((force -> a, i'):as))
+  go env pats@((p, i):ps) vals@(((force' -> a, i'):as))
     | i == i' =
       case match1 env p a of
         MatchFailed -> MatchFailed
@@ -90,9 +90,9 @@ vApp t u i = case force t of
   VRigid x sp    -> VRigid x (sp :> (u, i))
   -- env is used here,  when t is a meta solution, so that env = [], then t must be a closed term. so sp is empty too.
   VFunc f sp
-    | length sp + 1 < arity f -> evalFun [] f (funcClauses f) (sp :> (force u, i))
+    | length sp + 1 < arity f -> evalFun [] f (funcClauses f) (sp :> (force' u, i))
     | otherwise ->
-        let (rest, sp') = splitAt (length sp + 1 - arity f) (sp :> (force u,i)) in
+        let (rest, sp') = splitAt (length sp + 1 - arity f) (sp :> (force' u,i)) in
           vAppSp (evalFun [] f (funcClauses f) sp') rest
   VHold f sp m   -> VHold f (sp :> (u,i)) m
   VCons c sp     -> VCons c (sp :> (u,i))
@@ -120,9 +120,16 @@ vApp t u i = case force t of
 -- re-computed once the blocking metas are solved.
 reduceOeq :: HasGlobal => Spine -> Maybe Val
 reduceOeq ([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case (force a, force t, force u) of
-  (a, VSig envt telet, VSig envu teleu) -> oeqTeleTy (envt, telet) (envu, teleu)
+  (a, VSig envt telet   , VSig envu teleu       ) -> oeqTeleTy (envt, telet) (envu, teleu)
+  (_, VPi x i a b bsort , VPi x' i' a' b' bsort')
+    | i == i' -> oeqTeleTy (piTele x i a b bsort) (piTele x' i' a' b' bsort')
   _ -> Nothing
 reduceOeq _ = Nothing
+
+piTele :: Name -> Icit -> VType -> Closure -> Sort -> (Env, Telescope')
+piTele x i a b bsort = ( [] :> unVEl a :> VLam x i b
+                       , [ ("dom", El (Var 1) (getVSort a))
+                         , ("cod", El (App (Var 1) (Var 0) i) bsort)])
 
 -- | Generating a sigma type, recording the equality between two telescopes.
 -- > Δ1 = (x_0 : A_0) (x_1 : A_1[x_0]) ... (x_(n-1) : A_(n-1)[x_<(n-1)])
@@ -147,7 +154,7 @@ oeqTeleTy (envA, as) (envB, bs)
     fieldNames = map fst as
     -- the sorts of the j-th fields of Δ1 and Δ2
     fieldSorts = zipWith (\(_, a) (_, b) -> (force (getSort a), force (getSort b))) as bs
-    -- TODO: If there is meta in s, we may get a stucked result, and would not be able to re-compute when the meta is solved. 
+
     known s    = s == SType || s == SProp
     -- s_j, only used when all the field sorts are known and agree
     fieldSort j = fst (fieldSorts !! j)

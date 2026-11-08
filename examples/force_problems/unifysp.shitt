@@ -1,0 +1,3 @@
+-- F (Oeq ?X ?Y) =?= F (sig ~ sig): the spine arguments must not be forced before unify
+def spTest : {A B : Type} (F : Prop -> Type) (h : {X Y : Type} -> F (X ~ Y)) -> F (sig { x : A; y : B } ~ sig { x : A; y : B })
+  | F h = h

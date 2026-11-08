@@ -70,7 +70,7 @@ rename m pren v = go pren v where
   goSp pren t (sp :> (u, i)) = App <$> goSp pren t sp <*> go pren u <*> pure i
 
   go :: HasGlobal => PartialRenaming -> Val -> IO Tm
-  go pren t = case force t of
+  go pren t = case force' t of
     VFlex m' sp | m == m'   -> throwIO UnifyError -- occurs check
                 | otherwise -> goSp pren (Meta m') sp
 
@@ -125,12 +125,21 @@ trySolve gamma m sp rhs =
   (solve gamma m sp rhs >> pure True) 
     `catch` \UnifyError -> pure False
 
+tryU :: IO () -> IO Bool
+tryU act = do
+  mcxt0 <- readIORef mcxt
+  mscxt0 <- readIORef smcxt
+  (act >> pure True) `catch` \UnifyError -> do
+    writeIORef mcxt mcxt0
+    writeIORef smcxt mscxt0
+    pure False
+
 type UnifyConfig = (?unifyOrConv :: Bool, HasGlobal) -- True for unification, False for conversion
 
 unifySp :: UnifyConfig => Cxt -> Spine -> Spine -> VTy -> IO ()
 unifySp cxt sp sp' = go cxt (reverse sp) (reverse sp') where 
   go cxt [] [] _ = pure ()
-  go cxt ((force -> t, _):us) ((force -> t', _):vs) (force -> VPi x i a b bs) = do 
+  go cxt ((t, _):us) ((t', _):vs) (force -> VPi x i a b bs) = do 
     unify cxt t t' a 
     go cxt us vs (b $$ t) -- No need to go under the binder
   go cxt _ _ _ = throwIO UnifyError
@@ -164,11 +173,14 @@ unify cxt@Cxt{..} t u ty = do
   where
     unifyRelevant :: UnifyConfig => Val -> Val -> VTy -> Sort -> IO ()
     unifyRelevant t u ty sort = case (force' t, force' u) of 
-      (VPrim Oeq sp _, VPrim Oeq sp' _) -> unifySp cxt sp sp' (evalCxt cxt (unEl oeqTy))
+      (t@(VPrim Oeq sp _), u@(VPrim Oeq sp' _)) -> do
+        b <- tryU $ unifySp cxt sp sp' (evalCxt cxt (unEl oeqTy)) -- if failed, force Full and try again
+        if b then pure () 
+             else unifyRelevant' t u ty sort
       (t, u) -> unifyRelevant' t u ty sort
 
     unifyRelevant' :: UnifyConfig => Val -> Val -> VTy -> Sort -> IO ()
-    unifyRelevant' t u ty sort = case (force t, force u, force ty) of
+    unifyRelevant' t_wkfc u_wkfc ty sort = case (force t_wkfc, force u_wkfc, force ty) of
       (VLam _ _ t , VLam _ _ t'    , VPi x _ a b bsort) -> unify (bind cxt x a) (t $$ VVar lvl) (t' $$ VVar lvl) (VEl (b $$ VVar lvl) bsort)
       (t          , VLam _ i t'    , VPi x _ a b bsort) -> unify (bind cxt x a) (vApp t (VVar lvl) i) (t' $$ VVar lvl) (VEl (b $$ VVar lvl) bsort)
       (VLam _ i t , t'             , VPi x _ a b bsort) -> unify (bind cxt x a) (t $$ VVar lvl) (vApp t' (VVar lvl) i) (VEl (b $$ VVar lvl) bsort)
@@ -178,8 +190,8 @@ unify cxt@Cxt{..} t u ty = do
           unifyTy (bind cxt x a) (VEl (b $$ VVar lvl) bsort) (VEl (b' $$ VVar lvl) b'sort)
       (VRigid x sp, VRigid x' sp'  , _) | x == x' -> unifySp cxt sp sp' (unVEl $ findType cxt x)
       -- (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp env l sp sp' -- we need typed meta to support this
-      (VFlex m sp  , t'             , _) | ?unifyOrConv -> solve lvl m sp t'
-      (t           , VFlex m' sp'   , _) | ?unifyOrConv -> solve lvl m' sp' t
+      (VFlex m sp  , u'             , _) | ?unifyOrConv -> solve lvl m sp u_wkfc
+      (t           , VFlex m' sp'   , _) | ?unifyOrConv -> solve lvl m' sp' t_wkfc
       (VFunc f sp  , VFunc f' sp'   , _) -> unifyFn (f, sp) (f', sp')
       (VHold f sp _, VHold f' sp' _ , _) -> unifyFn (f, sp) (f', sp')
       (VFunc f sp  , VHold f' sp'  _, _) -> unifyFn (f, sp) (f', sp') 

@@ -274,3 +274,7 @@ testExamples = do
   loadFile "examples/qit_test.shitt"  >> reset
   loadFile "examples/qiit_stlc.shitt" >> reset
   loadFile "examples/sigma.shitt"     >> reset
+  loadFile "examples/oeqOnPi.shitt"   >> reset
+  loadFile "examples/force_problems/match.shitt" >> reset
+  loadFile "examples/force_problems/rename.shitt" >> reset
+  loadFile "examples/force_problems/unifysp.shitt" >> reset

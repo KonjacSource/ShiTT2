@@ -1,0 +1,6 @@
+-- K P = P: the argument bound by the pattern must keep the Oeq head
+def K : Prop -> Prop
+  | P = P
+
+def matchTest : {A B : Type} (h : {X Y : Type} -> X ~ Y) -> K (sig { x : A; y : B } ~ sig { x : A; y : B })
+  | h = h

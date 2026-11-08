@@ -9,7 +9,7 @@ type Env     = [Val]
 type Spine   = [(Val, Icit)]
 type VTelescope = [(Name, Icit, VTy)]
 type VTelescope' = [(Name, VTy)]
-data Closure = Closure Env Tm deriving Show 
+data Closure = Closure { captured :: Env, closure :: Tm } deriving Show 
 
 type VTy     = Val
 data VType   = VEl { unVEl :: VTy, getVSort :: Sort } deriving Show

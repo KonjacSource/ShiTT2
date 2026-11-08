@@ -1,0 +1,34 @@
+def piDom : {A B : Type} (e : ((x : A) -> B) ~ ((x : A) -> B)) -> A ~ A
+  | e = e.dom
+
+def piCod : {A B : Type} (e : ((x : A) -> B) ~ ((x : A) -> B)) -> (x : A) -> B ~ B
+  | e = e.cod
+
+def Arr : Type -> Type -> Type
+  | A B = (x : A) -> B
+
+def piDom2 : {A B C : Type} (e : Arr A B ~ Arr C B) -> A ~ C
+  | e = e.dom
+
+def piCodDep : {A : Type} {P : A -> Type} (e : ((x : A) -> P x) ~ ((x : A) -> P x))
+            -> (x : A) -> P x ~ P (cast (e.dom) x)
+  | e = e.cod
+
+
+---
+
+def useH : {A B : Type} (h : {X Y : Type} -> X ~ Y) -> sig { x : A; y : B } ~ sig { x : A; y : B }
+  | h = h
+
+-- Oeq on Pi and Oeq on sig {dom; cod} reduce to the same telescope,
+-- so these two types are definitionally equal.
+def collide : {A B : Type} (e : ((x : A) -> B) ~ ((x : A) -> B)) -> sig { dom : A; cod : B } ~ sig { dom : A; cod : B }
+  | e = e
+
+def idP : {T : Prop} (t : T) -> T
+  | t = t
+
+-- the same equation, but the expected type reaches unify unforced
+def collide2 : (A B : Type) (e : ((x : A) -> B) ~ ((x : A) -> B)) -> sig { dom : A; cod : B } ~ sig { dom : A; cod : B }
+  | A B e = idP {sig { dom : A; cod : B } ~ sig { dom : A; cod : B }} e
+
