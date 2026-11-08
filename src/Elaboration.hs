@@ -194,7 +194,8 @@ inferSort cxt t = case t of
       VProp -> pure $ El t SProp
       VFlex _ _ -> do
         unifyCatchTy cxt ty (VEl VType SType)
-        pure $ El t SType  -- TODO: We ignore that the case when t is in Prop, we should add this back when we have typed meta 
+        s <- freshSMeta
+        pure $ El t s
       _ -> throwIO $ Error cxt $ NotAType (quoteCxt cxt (unVEl ty))
 
 infer :: HasGlobal => Cxt -> R.Tm -> IO (Tm, VType)

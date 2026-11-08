@@ -24,17 +24,18 @@ fresh ns x | elem x ns = fresh ns (x ++ "'")
            | otherwise = x
 
 -- printing precedences
-atomp = 3  :: Int -- U, var
-appp  = 2  :: Int -- application
-pip   = 1  :: Int -- pi
-letp  = 0  :: Int -- let, lambda
+atomp = 3  :: Float -- U, var
+appp  = 2  :: Float -- application
+eqp = 1.5 :: Float
+pip   = 1  :: Float -- pi
+letp  = 0  :: Float -- let, lambda
 
 -- Wrap in parens if expression precedence is lower than
 -- enclosing expression precedence.
-par :: Int -> Int -> ShowS -> ShowS
+par :: Float -> Float -> ShowS -> ShowS
 par p p' = showParen (p' < p)
 
-prettyTm :: HasCallStack => Int -> [Name] -> Tm -> ShowS
+prettyTm :: HasCallStack => Float -> [Name] -> Tm -> ShowS
 prettyTm prec = go prec where
 
   bracket :: ShowS -> ShowS
@@ -46,7 +47,7 @@ prettyTm prec = go prec where
   lamBind x Impl = bracket (x++)
   lamBind x Expl = (x++)
 
-  goBDS :: Int -> [Name] -> MetaVar -> [BD] -> ShowS
+  goBDS :: Float -> [Name] -> MetaVar -> [BD] -> ShowS
   goBDS p ns m bds = case (ns, bds) of
     ([]      , []             ) -> (("?"++show m)++)
     (ns :> n , bds :> Bound   ) -> par p appp $ goBDS appp ns m bds . (' ':) . (n++)
@@ -57,10 +58,12 @@ prettyTm prec = go prec where
   sepBy _   []     = id
   sepBy sep (s:ss) = s . foldr (\s' acc -> (sep++) . s' . acc) id ss
 
-  go :: HasCallStack => Int -> [Name] -> Tm -> ShowS
+  go :: HasCallStack => Float -> [Name] -> Tm -> ShowS
   go p ns = \case
     Var (Ix x)   | x >= 0     -> ((ns !! x)++)
-                 | otherwise -> (("<"++ show x ++ ">")++)
+                 | otherwise  -> (("<"++ show x ++ ">")++)
+    App (App (App (Prim Oeq) ty Impl) a Expl) b Expl
+                              -> par p eqp $ go appp ns a . (" ~"++) . bracket (go letp ns ty) . (' ':) . go appp ns b
     App t u Expl              -> par p appp $ go appp ns t . (' ':) . go atomp ns u
     App t u Impl              -> par p appp $ go appp ns t . (' ':) . bracket (go letp ns u)
 

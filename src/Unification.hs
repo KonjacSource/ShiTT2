@@ -149,6 +149,7 @@ unifyTy cxt (VEl a as) (VEl b bs) = do
   unifySort cxt as bs
   unify cxt a b (VEl VType SType)
 
+-- TODO: Univ Level
 unifySort :: UnifyConfig => Cxt -> Sort -> Sort -> IO ()
 unifySort cxt s1 s2 = case (force s1, force s2) of 
   (SType, SType) -> pure ()

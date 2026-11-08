@@ -326,8 +326,14 @@ quoteSp l t = \case
   []           -> t
   sp :> (u, i) -> App (quoteSp l t sp) (quote l u) i
 
+quoteSpFull :: HasGlobal => Lvl -> Tm -> Spine -> Tm
+quoteSpFull l t = \case
+  []           -> t
+  sp :> (u, i) -> App (quoteSpFull l t sp) (quoteFull l u) i
+
 class Quote a b | a -> b where 
   quote :: HasGlobal => Lvl -> a -> b
+  quoteFull :: HasGlobal => Lvl -> a -> b
 
 instance Quote Val Tm where
   quote l t = case force' t of -- keep Oeq unreduced
@@ -348,9 +354,29 @@ instance Quote Val Tm where
     VSig env tys -> Sig $ quoteTele l env tys
     VMkSig ts    -> MkSig $ map (second (quote l)) ts
     VProj v x sp -> quoteSp l (Proj (quote l v) x) sp
+  
+  quoteFull l t = case force t of -- fully reduce Oeq, Cast, and VHold
+    VFlex m sp -> quoteSpFull l (Meta m) sp
+    VRigid x sp  -> quoteSpFull l (Var (lvl2Ix l x)) sp
+    VLam x i t   -> Lam x i (quoteFull (l + 1) (t $$ VVar l))
+    VPi x i a b bs -> Pi x i (quoteFull l a) (El (quoteFull (l + 1) (b $$ VVar l)) bs)
+    VAbsurd v    -> Absurd (quoteFull l v)
+
+    VCons c sp   -> quoteSpFull l (Call (consName c)) sp
+    VFunc f sp   -> quoteSpFull l (Call (funcName f)) sp
+    VHold f sp _ -> quoteSpFull l (Call (funcName f)) sp
+    VData d sp   -> quoteSpFull l (Call (dataName d)) sp
+    VPathCons f sp -> quoteSpFull l (Call (eqNameDef f)) sp
+    VSort s      -> TmSort s
+    VPropTm      -> PropTm
+    VPrim p sp r -> quoteSpFull l (Prim p) sp
+    VSig env tys -> Sig $ quoteTele l env tys
+    VMkSig ts    -> MkSig $ map (second (quoteFull l)) ts
+    VProj v x sp -> quoteSpFull l (Proj (quoteFull l v) x) sp
 
 instance Quote VType Type where
   quote l (VEl t s) = El (quote l t) s
+  quoteFull l (VEl t s) = El (quoteFull l t) (force s)
 
 quoteTele :: HasGlobal => Lvl -> Env -> Telescope' -> Telescope'
 quoteTele l env = \case

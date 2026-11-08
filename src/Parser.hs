@@ -50,6 +50,7 @@ kwList = [ "let",       "λ",      "U"
          , "quotient",  "cast",   "apd"
          , "Prop",      "Type",   "for"
          , "rfl",       "sig"
+         , "#print",    "#check", "#fail"
          ]
 
 keyword :: String -> Bool
@@ -417,8 +418,15 @@ pDef = do
                 , pFunc        >>= pure . RDefFunc
                 , pData        >>= pure . RDefData
                 , pMutualBlock >>= pure . RDefMutual
+                , pCommand     >>= pure . RCommand
                 ]
   pure (spos, def)
+
+pCommand :: Parser Command
+pCommand =
+      (pKeyword "#print" >> pTm >>= pure . CmdPrint)
+  <|> (pKeyword "#check" >> pTm >>= \t -> optional (char ':' >> pTm) >>= pure . CmdCheck t)
+  <|> (pKeyword "#fail"  >> pDef >>= pure . CmdFail . snd)
 
 pProgram :: Parser Program 
 pProgram = many pDef

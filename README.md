@@ -28,3 +28,9 @@ def apd for f
 ```
 
 Note. In this example, you have to give an apd clause for (f true) to show congruence, but no need for (f false).
+
+## Acknowledgements & References
+
+The code is based on [András Kovács](https://andraskovacs.github.io/)' [elaboration zoo](https://github.com/AndrasKovacs/elaboration-zoo).
+
+The theory is based on Loïc Pujet, Nicolas Tabareau's [Observational Equality Meets CIC], but we support indexed inductive types in Cubical Agda's style (I mean ``transpX``, but currently we don't have it yet).

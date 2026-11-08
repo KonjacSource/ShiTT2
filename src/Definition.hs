@@ -128,9 +128,16 @@ data RMutalBlock = RMutalBlock
   }
 
 data RDef 
-  = RDefData RDataDef 
-  | RDefFunc RFuncDef 
-  | RDefApd RApdDef
-  | RDefMutual RMutalBlock
+  = RDefData   RDataDef     -- ^ data
+  | RDefFunc   RFuncDef     -- ^ def 
+  | RDefApd    RApdDef      -- ^ def apd
+  | RDefMutual RMutalBlock  -- ^ mutual
+  | RCommand   Command      -- ^ #..
+
+data Command 
+  = CmdPrint R.Tm               -- ^ #print
+  | CmdCheck R.Tm (Maybe R.Tm)  -- ^ #check 
+  | CmdFail  RDef               -- ^ #fail
+
 
 type Program = [(SourcePos, RDef)]

@@ -32,3 +32,4 @@ def idP : {T : Prop} (t : T) -> T
 def collide2 : (A B : Type) (e : ((x : A) -> B) ~ ((x : A) -> B)) -> sig { dom : A; cod : B } ~ sig { dom : A; cod : B }
   | A B e = idP {sig { dom : A; cod : B } ~ sig { dom : A; cod : B }} e
 
+#check piDom

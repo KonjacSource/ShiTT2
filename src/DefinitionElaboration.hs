@@ -171,6 +171,28 @@ checkProg' defs qiti ((sp, d):ds) = case d of
       FunHeader name _ -> checkFuncCover sp defs'' qiti name
       _ -> pure ()
     checkProg' defs'' qiti'' ds
+  RCommand c -> checkCommand defs qiti c >> checkProg' defs qiti ds
+
+checkCommand :: Defs -> QITInfo -> Command -> IO ()
+checkCommand defs qiti c = withGlobal defs qiti $ case c of
+  CmdPrint t -> do
+    (inferred, _) <- E.infer (emptyCxt (initialPos "TODO")) t
+    putStrLn $ "Inferred type: " ++ showTm (emptyCxt (initialPos "TODO")) inferred
+  CmdCheck t (Just m) -> do 
+    m' <- eval [] <$> E.inferSort (emptyCxt (initialPos "TODO")) m
+    t <- E.check (emptyCxt (initialPos "TODO")) t m'
+    putStrLn $ 
+      "Checked term: " ++ showTm (emptyCxt (initialPos "TODO")) t ++ 
+      " : " ++ showValFull (emptyCxt (initialPos "TODO")) (unVEl m') ++ 
+      " : " ++ show (getVSort m')
+  CmdCheck t Nothing -> do
+    (inferred, ty) <- E.infer (emptyCxt (initialPos "TODO")) t
+    putStrLn $ "Inferred type: " ++ showTm (emptyCxt (initialPos "TODO")) inferred ++ 
+      " : " ++ showValFull (emptyCxt (initialPos "TODO")) (unVEl ty) ++ 
+      " : " ++ show (getVSort ty)
+  CmdFail d -> do
+    putStrLn "Unsupported command."
+
 
 checkApd :: SourcePos -> Defs -> QITInfo -> RApdDef -> IO (Defs, QITInfo)
 checkApd srcpos defs qiti (RApdDef f []) = pure (defs, qiti)

@@ -50,6 +50,10 @@ showVal :: HasGlobal => Cxt -> Val -> String
 showVal cxt v =
   prettyTm 0 (cxtNames cxt) (quoteCxt cxt v) []
 
+showValFull :: HasGlobal => Cxt -> Val -> String
+showValFull cxt v =
+  prettyTm 0 (cxtNames cxt) (quoteFull (lvl cxt) v) []
+
 showSp :: HasGlobal => Cxt -> Spine -> String
 showSp cxt sp = join $ map (\(v, i) -> paren i (showVal cxt v)) (reverse sp) where
   paren Impl s = "{" ++ s ++ "} "
