@@ -1,0 +1,22 @@
+def pairEqX : {A B : Type} (p q : sig { x : A; y : B }) (e : p ~ q) -> p.x ~ q.x
+  | p q e = e.x
+
+def pairEqY : {A B : Type} (p q : sig { x : A; y : B }) (e : p ~ q) -> p.y ~ cast (rfl B) q.y
+  | p q e = e.y
+
+def depEqY : {A : Type} {P : A -> Type} (p q : sig { x : A; y : P x }) (h : P q.x ~ P p.x) (e : p ~ q)
+          -> p.y ~ cast h q.y
+  | p q h e = e.y
+
+def mkPairEq : {A B : Type} (p q : sig { x : A; y : B }) (e1 : p.x ~ q.x) (e2 : p.y ~ cast (rfl B) q.y) -> p ~ q
+  | p q e1 e2 = <e1; e2>
+
+def pairRfl : {A B : Type} (p : sig { x : A; y : B }) -> p ~ p
+  | p = rfl p
+
+def withProp : {A : Type} (p q : sig { x : A; h : x ~ x }) (e : p ~ q) -> p.x ~ q.x
+  | p q e = e.x
+
+#check pairEqY
+#check depEqY
+#check withProp

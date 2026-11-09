@@ -97,7 +97,7 @@ prettyTm prec = go prec where
     TmSort _                  -> ("Sort?"++) -- TODO
     PropTm                    -> (".." ++)
     Prim p                    -> (show p ++)
-    Proj t x                  -> par p atomp $ go atomp ns t . ((" ."++x)++) 
+    Proj t x                  -> par p atomp $ go atomp ns t . (("."++x)++) 
     Sig tys                   -> ("sig {"++) . goTele ns tys . ('}':) where
                                    goTele ns []           = id
                                    goTele ns [(x, El a _)]     = field ns x a

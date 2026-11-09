@@ -80,7 +80,14 @@ data Prim
   -- eq {A : U} (x y : A) : Prop
   | Rfl
   -- rfl {A : U} (x : A) : x ~{A} x
-  deriving (Show, Eq)
+  deriving Eq
+
+instance Show Prim where 
+  show = \case
+    Apd -> "apd"
+    Cast -> "cast"
+    Oeq -> "eq"
+    Rfl -> "rfl"
 
 type Telescope = [(Name, Icit, Type)]
 type Telescope' = [(Name, Type)]

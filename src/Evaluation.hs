@@ -59,12 +59,12 @@ match1 env pat val = let val_wkfc = force' val in case (pat, force val_wkfc) of
   (PatCon _ _, VProj {})               -> MatchStuck BProj
   (PatCon c ps, VPathCons p args) -- Lean's lesson: large elim over prop level values should not be allowed. 
                                   -- But here is ok, because the only way to match a path constructor is using `apd`, which is in prop verse.
-    | length ps == length args && c == eqNameDef p -> fmap (PatCon c) (match env ps args)
+    | length ps == length args, c == eqNameDef p -> fmap (PatCon c) (match env ps args)
   (PatCon c ps, VPathCons p args)      -> MatchFailed
   (PatFunc f ps, VFunc f' args)
-    | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match env ps args)
+    | length ps == length args, f == funcName f' -> fmap (PatFunc f) (match env ps args)
   (PatFunc f ps, VHold f' args _)
-    | length ps == length args && f == funcName f' -> fmap (PatFunc f) (match env ps args)
+    | length ps == length args, f == funcName f' -> fmap (PatFunc f) (match env ps args)
   (PatFunc f ps, _)                    -> MatchFailed -- for apd clause, we consider function names as codes 
 
 match :: HasGlobal => Env -> [(Pattern, Icit)] -> Spine -> MatchResult (PatternTele ())
@@ -107,9 +107,9 @@ vApp t u i = case force t of
   where
     mkPrim p sp = VPrim p sp (reducePrim p sp)
     reducePrim :: HasGlobal => Prim -> Spine -> Reduced
-    reducePrim Oeq sp@([]:>(_, Impl):>(t, Expl):>(u, Expl)) = case reduceOeq sp of
+    reducePrim Oeq sp@([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case reduceOeq sp of
       Just r  -> RReduced r
-      Nothing -> case blockers (force t) ++ blockers (force u) of
+      Nothing -> case blockers (force a) ++ blockers (force t) ++ blockers (force u) of
         [] -> RNeutral
         ms -> RBlocked ms
     reducePrim _ _ = RNeutral
@@ -123,12 +123,14 @@ reduceOeq ([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case (force a, force t, force 
   (a                , VSig envt telet   , VSig envu teleu       ) -> oeqTeleTy (envt, telet) (envu, teleu)
   (_                , VPi x i a b bsort , VPi x' i' a' b' bsort')
     | i == i' -> oeqTeleTy (piTele x i a b bsort) (piTele x' i' a' b' bsort')
-  (VPi x i a b bsort, f                 , g                     ) 
-    -> Just $ funextTy x i a b f g 
+  (VPi x i a b bsort, f                 , g                     ) -> Just $ funextTy x i a b f g
+  (VSig envt telet  , a                 , b                     ) -> Just $ sigEqTy envt telet a b
   _ -> Nothing
 reduceOeq _ = Nothing
 
-funextTy :: Name -> Icit -> VType -> Closure -> Val -> Val -> Val
+
+-- | funextTy x i a b f g => (x : a)_i -> f x ~{b x} g x
+funextTy :: Name -> Icit -> VType -> Closure -> Val -> Val -> VTy
 funextTy x i a b f g = VPi x i a (Closure ([] :> VLam x i b :> f :> g) body) SProp where
   body = applySp (Prim Oeq) [ (App (Var 3) (Var 0) i, Impl)    -- b x
                             , (App (Var 2) (Var 0) i, Expl)    -- f x
@@ -203,6 +205,39 @@ oeqTeleTy (envA, as) (envB, bs)
           | otherwise            = applySp (Prim Cast) [ (tyA d j, casticit), (tyB d j, casticit)
                                                        , (proof d j, Expl), (varAt d (lvlX j), Expl) ]
 
+-- | sigEqTy env [(x1:A1), (x2:A2[x1]), ...] a b => sig {x1 : a.x1 ~{A1} b.x1; x2 : a.x2 ~{A2[a.x1]} cast {A2[b.x1] ~> A2[a.x1]} b.x2; ...}
+sigEqTy :: HasGlobal => Env -> Telescope' -> Val -> Val -> VTy
+sigEqTy env tele a b = VSig famEnv [ (names !! k, eqField m k) | (m, k) <- zip [0 ..] kept ]
+  where
+    n     = length tele
+    names = map fst tele
+    -- Fields in Prop are omitted: their equations hold trivially by proof irrelevance
+    -- (and `cast` only works on Type). Only `SProp` is omitted, other sorts are kept.
+    kept  = [ k | (k, (_, ty)) <- zip [0 ..] tele, force (getSort ty) /= SProp ]
+    -- env ⊢ tele  ==>  env ⊢ λ x_0 .. x_(k-1). A_k  (the k-th field type as a function of the previous fields)
+    family :: Int -> Val
+    family k = eval env $ foldr (\x -> Lam x Expl) (unEl (snd (tele !! k))) (take k names)
+    -- Θ; local levels: a = 0, b = 1, G_k = 2 + k (G_k is the family of A_k)
+    famEnv = reverse $ [a, b] ++ [ family k | k <- [0 .. n - 1] ]
+    -- At depth `d`, the variable of local level `l`
+    varAt :: Int -> Int -> Tm
+    varAt d l = Var (Ix (d - l - 1))
+    -- Θ, (the first m kept fields) ⊢ eqField m k : the m-th kept field, i.e. the k-th field of the telescope
+    --   = a.x_0 ~{A_0} b.x_0                                          if k = 0
+    --   = a.x_k ~{A_k[a.x_<k]} cast {A_k[b.x_<k]} {A_k[a.x_<k]} _ b.x_k  otherwise
+    eqField :: Int -> Int -> Type
+    eqField m k = El (applySp (Prim Oeq) [ (tyAt va, Impl), (proj va k, Expl), (castB, Expl) ]) SProp
+      where
+        d        = n + 2 + m
+        va       = varAt d 0
+        vb       = varAt d 1
+        proj v j = Proj v (names !! j)
+        -- A_k[v.x_<k] = G_k v.x_0 .. v.x_(k-1)
+        tyAt v   = applySp (varAt d (2 + k)) [ (proj v j, Expl) | j <- [0 .. k - 1] ]
+        castB
+          | k == 0    = proj vb k
+          | otherwise = applySp (Prim Cast) [ (tyAt vb, casticit), (tyAt va, casticit)
+                                            , (PropTm, Expl), (proj vb k, Expl) ]
 
 wkTm :: HasGlobal => Env -> Lvl -> Lvl -> Tm -> Tm
 wkTm env l n t = quote (l + n) (eval env t)
@@ -264,7 +299,8 @@ instance Eval Tm Val where
     InsertedMeta m bds  -> vAppBDs env (vMeta env m) bds
     Call f              -> case M.lookup f ?defs of
                             Just (DefFunc f)
-                              | arity f == 0 && not (null $ funcClauses f) -> eval env (clauseRhs (head (funcClauses f))) -- eval 0-arity function
+                              | arity f == 0
+                              , not (null $ funcClauses f) -> eval env (clauseRhs (head (funcClauses f))) -- eval 0-arity function
                               | otherwise -> VFunc f []
                             Just (DefData d) -> VData d []
                             Just (DefEq  eq) -> VPathCons eq []
@@ -309,10 +345,10 @@ instance Force HasGlobal Val where
     VHold f sp (RBlocked m)
       | allSolved' m -> VHold f sp . RReduced $ force (vAppSp (VFunc f []) sp)
     VProj v x sp -> case force v of
-      VMkSig fs -> force (vAppSp (fromJust $ lookup x fs) sp)
-      VPropTm   -> VPropTm
-      v'        -> VProj v' x sp
-    v -> v
+      VMkSig fs  -> force (vAppSp (fromJust $ lookup x fs) sp)
+      VPropTm    -> VPropTm
+      v'         -> VProj v' x sp
+    v            -> v
 
   force v = case force' v of
     VPrim _ _ (RReduced v) -> force v
@@ -345,42 +381,40 @@ class Quote a b | a -> b where
 
 instance Quote Val Tm where
   quote l t = case force' t of -- keep Oeq unreduced
-    VFlex m sp -> quoteSp l (Meta m) sp
-    VRigid x sp  -> quoteSp l (Var (lvl2Ix l x)) sp
-    VLam x i t   -> Lam x i (quote (l + 1) (t $$ VVar l))
+    VFlex m sp     -> quoteSp l (Meta m) sp
+    VRigid x sp    -> quoteSp l (Var (lvl2Ix l x)) sp
+    VLam x i t     -> Lam x i (quote (l + 1) (t $$ VVar l))
     VPi x i a b bs -> Pi x i (quote l a) (El (quote (l + 1) (b $$ VVar l)) bs)
-    VAbsurd v    -> Absurd (quote l v)
-
-    VCons c sp   -> quoteSp l (Call (consName c)) sp
-    VFunc f sp   -> quoteSp l (Call (funcName f)) sp
-    VHold f sp _ -> quoteSp l (Call (funcName f)) sp
-    VData d sp   -> quoteSp l (Call (dataName d)) sp
+    VAbsurd v      -> Absurd (quote l v)
+    VCons c sp     -> quoteSp l (Call (consName c)) sp
+    VFunc f sp     -> quoteSp l (Call (funcName f)) sp
+    VHold f sp _   -> quoteSp l (Call (funcName f)) sp
+    VData d sp     -> quoteSp l (Call (dataName d)) sp
     VPathCons f sp -> quoteSp l (Call (eqNameDef f)) sp
-    VSort s      -> TmSort s
-    VPropTm      -> PropTm
-    VPrim p sp r -> quoteSp l (Prim p) sp
-    VSig env tys -> Sig $ quoteTele l env tys
-    VMkSig ts    -> MkSig $ map (second (quote l)) ts
-    VProj v x sp -> quoteSp l (Proj (quote l v) x) sp
+    VSort s        -> TmSort s
+    VPropTm        -> PropTm
+    VPrim p sp r   -> quoteSp l (Prim p) sp
+    VSig env tys   -> Sig $ quoteTele l env tys
+    VMkSig ts      -> MkSig $ map (second (quoteFull l)) ts
+    VProj v x sp   -> quoteSp l (Proj (quote l v) x) sp
   
   quoteFull l t = case force t of -- fully reduce Oeq, Cast, and VHold
-    VFlex m sp -> quoteSpFull l (Meta m) sp
-    VRigid x sp  -> quoteSpFull l (Var (lvl2Ix l x)) sp
-    VLam x i t   -> Lam x i (quoteFull (l + 1) (t $$ VVar l))
+    VFlex m sp     -> quoteSpFull l (Meta m) sp
+    VRigid x sp    -> quoteSpFull l (Var (lvl2Ix l x)) sp
+    VLam x i t     -> Lam x i (quoteFull (l + 1) (t $$ VVar l))
     VPi x i a b bs -> Pi x i (quoteFull l a) (El (quoteFull (l + 1) (b $$ VVar l)) bs)
-    VAbsurd v    -> Absurd (quoteFull l v)
-
-    VCons c sp   -> quoteSpFull l (Call (consName c)) sp
-    VFunc f sp   -> quoteSpFull l (Call (funcName f)) sp
-    VHold f sp _ -> quoteSpFull l (Call (funcName f)) sp
-    VData d sp   -> quoteSpFull l (Call (dataName d)) sp
+    VAbsurd v      -> Absurd (quoteFull l v)
+    VCons c sp     -> quoteSpFull l (Call (consName c)) sp
+    VFunc f sp     -> quoteSpFull l (Call (funcName f)) sp
+    VHold f sp _   -> quoteSpFull l (Call (funcName f)) sp
+    VData d sp     -> quoteSpFull l (Call (dataName d)) sp
     VPathCons f sp -> quoteSpFull l (Call (eqNameDef f)) sp
-    VSort s      -> TmSort s
-    VPropTm      -> PropTm
-    VPrim p sp r -> quoteSpFull l (Prim p) sp
-    VSig env tys -> Sig $ quoteTele l env tys
-    VMkSig ts    -> MkSig $ map (second (quoteFull l)) ts
-    VProj v x sp -> quoteSpFull l (Proj (quoteFull l v) x) sp
+    VSort s        -> TmSort s
+    VPropTm        -> PropTm
+    VPrim p sp r   -> quoteSpFull l (Prim p) sp
+    VSig env tys   -> Sig $ quoteTele l env tys
+    VMkSig ts      -> MkSig $ map (second (quoteFull l)) ts
+    VProj v x sp   -> quoteSpFull l (Proj (quoteFull l v) x) sp
 
 instance Quote VType Type where
   quote l (VEl t s) = El (quote l t) s
