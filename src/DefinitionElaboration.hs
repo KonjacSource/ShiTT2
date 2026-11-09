@@ -177,19 +177,19 @@ checkCommand :: Defs -> QITInfo -> Command -> IO ()
 checkCommand defs qiti c = withGlobal defs qiti $ case c of
   CmdPrint t -> do
     (inferred, _) <- E.infer (emptyCxt (initialPos "TODO")) t
-    putStrLn $ "Inferred type: " ++ showTm (emptyCxt (initialPos "TODO")) inferred
+    putStrLn $ "Inferred type: " ++ showTm (emptyCxt (initialPos "TODO")) (zonk inferred)
   CmdCheck t (Just m) -> do 
     m' <- eval [] <$> E.inferSort (emptyCxt (initialPos "TODO")) m
     t <- E.check (emptyCxt (initialPos "TODO")) t m'
     putStrLn $ 
-      "Checked term: " ++ showTm (emptyCxt (initialPos "TODO")) t ++ 
-      " : " ++ showValFull (emptyCxt (initialPos "TODO")) (unVEl m') ++ 
+      "Checked term: " ++ showTm (emptyCxt (initialPos "TODO")) (zonk t) ++
+      " : " ++ showValFull (emptyCxt (initialPos "TODO")) (zonk $ unVEl m') ++ 
       " : " ++ show (getVSort m')
   CmdCheck t Nothing -> do
     (inferred, ty) <- E.infer (emptyCxt (initialPos "TODO")) t
-    putStrLn $ "Inferred type: " ++ showTm (emptyCxt (initialPos "TODO")) inferred ++ 
-      " : " ++ showValFull (emptyCxt (initialPos "TODO")) (unVEl ty) ++ 
-      " : " ++ show (getVSort ty)
+    putStrLn $ "Inferred type: " ++ showTm (emptyCxt (initialPos "TODO")) (zonk inferred) ++
+      " : " ++ showValFull (emptyCxt (initialPos "TODO")) (zonk $ unVEl ty) ++ 
+      " : " ++ show (zonk $ getVSort ty)
   CmdFail d -> do
     putStrLn "Unsupported command."
 

@@ -33,3 +33,19 @@ def collide2 : (A B : Type) (e : ((x : A) -> B) ~ ((x : A) -> B)) -> sig { dom :
   | A B e = idP {sig { dom : A; cod : B } ~ sig { dom : A; cod : B }} e
 
 #check piDom
+
+#check {A : Type} {B : A -> Type} (f g : (x : A) -> B x) (e : (x : A) -> f x ~ g x) -> f ~ g
+
+def fnext : {A : Type} {B : A -> Type} (f g : (x : A) -> B x) (e : (x : A) -> f x ~ g x) -> f ~ g
+  | f g e = e
+
+
+def fnid1 : {A : Type} {B : A -> Type} (f : (x : A) -> B x) -> f ~ f
+  | f = rfl _
+
+#check fnid1
+
+def fnid2 : {A : Type} {B : A -> Type} (f : (x : A) -> B x) -> f ~ f
+  | f = \_ . rfl _
+
+#check fnid2

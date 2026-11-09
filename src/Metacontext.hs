@@ -82,3 +82,6 @@ allSolved' :: [MetaVar] -> Bool
 allSolved' = all (\m -> case lookupMeta m of
   Solved _ -> True
   Unsolved -> False)
+
+class Zonk a where 
+  zonk :: HasGlobal => a -> a

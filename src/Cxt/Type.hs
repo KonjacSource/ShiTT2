@@ -62,7 +62,6 @@ withGlobal' defsR act = do
       ?qitInfo = qiti
   act 
 
-
 insertEqCon :: EqCons -> QITInfo -> QITInfo
 insertEqCon eqcons qiti = 
   qiti { extraEq  = M.insert (eqName eqcons) eqcons (extraEq qiti)

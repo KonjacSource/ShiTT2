@@ -2,6 +2,7 @@ module Syntax where
 
 import Common
 import qualified Data.Map as M
+import Data.List (intercalate)
 
 data Clause = Clause
   { clausePatterns :: PatternTele Empty
@@ -85,7 +86,16 @@ type Telescope = [(Name, Icit, Type)]
 type Telescope' = [(Name, Type)]
 
 data Sort = SType | SProp | SMeta SMetaVar | IMax Sort Sort | UMax [Sort] | Suc Sort
-  deriving (Show, Eq)
+  deriving Eq
+
+instance Show Sort where
+  show = \case
+    SType -> "Type"
+    SProp -> "Prop"
+    SMeta m -> "?" ++ show m
+    IMax s1 s2 -> "imax(" ++ show s1 ++ ", " ++ show s2 ++ ")"
+    UMax ss -> "max(" ++ intercalate ", " (map show ss) ++ ")"
+    Suc s -> "suc(" ++ show s ++ ")"
 
 -- | Pick a field, return the telescope of previous fields and the type of the field
 fieldType :: Telescope' -> Name -> Maybe (Telescope', Type)
@@ -229,4 +239,3 @@ class SortOf a where
 
 instance SortOf Type where
   sortOf (El _ s) = s
-

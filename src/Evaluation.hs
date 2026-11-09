@@ -120,11 +120,19 @@ vApp t u i = case force t of
 -- re-computed once the blocking metas are solved.
 reduceOeq :: HasGlobal => Spine -> Maybe Val
 reduceOeq ([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case (force a, force t, force u) of
-  (a, VSig envt telet   , VSig envu teleu       ) -> oeqTeleTy (envt, telet) (envu, teleu)
-  (_, VPi x i a b bsort , VPi x' i' a' b' bsort')
+  (a                , VSig envt telet   , VSig envu teleu       ) -> oeqTeleTy (envt, telet) (envu, teleu)
+  (_                , VPi x i a b bsort , VPi x' i' a' b' bsort')
     | i == i' -> oeqTeleTy (piTele x i a b bsort) (piTele x' i' a' b' bsort')
+  (VPi x i a b bsort, f                 , g                     ) 
+    -> Just $ funextTy x i a b f g 
   _ -> Nothing
 reduceOeq _ = Nothing
+
+funextTy :: Name -> Icit -> VType -> Closure -> Val -> Val -> Val
+funextTy x i a b f g = VPi x i a (Closure ([] :> VLam x i b :> f :> g) body) SProp where
+  body = applySp (Prim Oeq) [ (App (Var 3) (Var 0) i, Impl)    -- b x
+                            , (App (Var 2) (Var 0) i, Expl)    -- f x
+                            , (App (Var 1) (Var 0) i, Expl) ]  -- g x
 
 piTele :: Name -> Icit -> VType -> Closure -> Sort -> (Env, Telescope')
 piTele x i a b bsort = ( [] :> unVEl a :> VLam x i b
@@ -383,7 +391,6 @@ quoteTele l env = \case
   [] -> []
   (x, t):ts -> (x, quote l (eval env t)) : quoteTele (l + 1) (VVar l : env) ts
 
-
 -- return the levels of bound variables introduced by the clause
 countVarPat :: Lvl -> Clause -> (Int, [Lvl])
 countVarPat (Lvl l) (Clause ps _) = (cnt ps, make (cnt ps)) where
@@ -446,27 +453,20 @@ p2v dep = fst . go1 dep where
 
   go1 :: Lvl -> Pattern -> (Val, Lvl)
   go1 l = \case
-    PatVar _ -> (VVar l, l+1)
-    PatCon c ps -> case M.lookup c ?defs of
-      Just (DefCons c) ->
-        let (l', r) = go l ps in
-          (VCons c l', r)
-      Just (DefEq eq) ->
-        let (l', r) = go l ps in
-          (VPathCons eq l', r)
-      _ -> error "p2v: impossible"
-    PatFunc f ps -> case M.lookup f ?defs of
-      Just (DefFunc f) ->
-        let (l', r) = go l ps in
-          (vAppSp (VFunc f []) l', r)
-      _ -> error "p2v: impossible"
+    PatVar _           -> (VVar l, l+1)
+    PatCon c ps        -> case M.lookup c ?defs of
+      Just (DefCons c) -> (VCons c l', r)             where (l', r) = go l ps 
+      Just (DefEq eq)  -> (VPathCons eq l', r)        where (l', r) = go l ps
+      _                -> error "p2v: impossible"
+    PatFunc f ps       -> case M.lookup f ?defs of
+      Just (DefFunc f) -> (vAppSp (VFunc f []) l', r) where (l', r) = go l ps
+      _                -> error "p2v: impossible"
 
   go :: Lvl -> [(Pattern, Icit)] -> (Spine, Lvl)
   go l [] = ([], l)
-  go l ((p,i):ps) =
-    let (p', l') = go1 l p
-        (ps', l'') = go l' ps
-    in (ps' ++ [(p', i)], l'')
+  go l ((p,i):ps) = (ps' ++ [(p', i)], l'') where
+    (p', l') = go1 l p
+    (ps', l'') = go l' ps
 
 updateVal :: HasGlobal => Cxt -> Val -> Val
 updateVal ctx = evalCxt ctx . quote (lvl ctx)
@@ -483,9 +483,9 @@ instance Force () Sort where
             | otherwise -> SMeta m
     IMax s s' -> imax (force s) (force s')
     UMax ss   -> umax (map force ss)
-    SType -> SType
-    SProp -> SProp
-    Suc s -> suc s
+    SType     -> SType
+    SProp     -> SProp
+    Suc s     -> suc s
 
 suc :: Sort -> Sort
 suc s = case force s of
@@ -506,8 +506,8 @@ umax1 a b = case (force a, force b) of
   (SProp, SType) -> SType
   (SType, SProp) -> SType
   (SProp, SProp) -> SProp
-  (UMax ss, s) -> UMax (s:ss)
-  (s, UMax ss) -> UMax (s:ss)
+  (UMax ss, s)   -> UMax (s:ss)
+  (s, UMax ss)   -> UMax (s:ss)
   (s    , s'   ) -> UMax [s, s']
 
 umax :: [Sort] -> Sort
@@ -528,3 +528,72 @@ instance SortOf Telescope' where
 
 instance SortOf Sort where 
   sortOf = suc
+
+instance Zonk Tm where 
+  zonk = \case 
+    Var x               -> Var x
+    Call f              -> Call f
+    Lam x i t           -> Lam x i (zonk t)
+    App t u i           -> App (zonk t) (zonk u) i
+    Absurd t            -> Absurd (zonk t)
+    Pi x i a b          -> Pi x i (zonk a) (zonk b)
+    Let x a t u         -> Let x (zonk a) (zonk t) (zonk u)
+    Meta m              -> case lookupMeta m of 
+      Solved v          -> zonk $ quote 0 v
+      Unsolved          -> Meta m
+    InsertedMeta m bds  -> case lookupMeta m of
+      Solved v          -> let l     = length bds
+                               idEnv = [ VVar (Lvl k) | k <- [l - 1, l - 2 .. 0] ]
+                           in zonk $ quote (Lvl l) (vAppBDs idEnv v bds)
+      Unsolved          -> InsertedMeta m bds
+    TmSort s            -> TmSort s
+    PropTm              -> PropTm
+    Prim p              -> Prim p
+    Proj t x            -> Proj (zonk t) x
+    Sig ts              -> Sig [(x, zonk a) | (x, a) <- ts]
+    MkSig ts            -> MkSig [(x, zonk t) | (x, t) <- ts]
+
+instance Zonk Type where 
+  zonk (El t s) = El (zonk t) (zonk s)
+
+instance Zonk Sort where 
+  zonk = \case 
+    SMeta m     -> case lookupSMeta m of 
+      SSolved s -> zonk s
+      SUnsolved -> SMeta m
+    IMax s s'   -> IMax (zonk s) (zonk s')
+    UMax ss     -> UMax (map zonk ss)
+    SType       -> SType
+    SProp       -> SProp
+    Suc s       -> Suc (zonk s)
+
+zonkSp :: HasGlobal => Spine -> Spine
+zonkSp = \case
+  [] -> []
+  sp :> (v, i) -> zonkSp sp :> (zonk v, i)
+
+-- | Zonking a closure needs no level: zonk the captured values and the body term.
+zonkCls :: HasGlobal => Closure -> Closure
+zonkCls (Closure env t) = Closure (map zonk env) (zonk t)
+
+instance Zonk Val where
+  zonk v = case force' v of
+    VFlex m sp      -> VFlex m (zonkSp sp)
+    VRigid x sp     -> VRigid x (zonkSp sp)
+    VLam x i t      -> VLam x i (zonkCls t)
+    VPi x i a b bs  -> VPi x i (zonk a) (zonkCls b) (zonk bs)
+    VAbsurd v       -> VAbsurd (zonk v)
+    VCons c sp      -> VCons c (zonkSp sp)
+    VFunc f sp      -> VFunc f (zonkSp sp)
+    VHold f sp m    -> VHold f (zonkSp sp) m
+    VData d sp      -> VData d (zonkSp sp)
+    VPathCons f sp  -> VPathCons f (zonkSp sp)
+    VPrim p sp r    -> VPrim p (zonkSp sp) r
+    VSig env ts     -> VSig (map zonk env) [(x, zonk t) | (x, t) <- ts]
+    VMkSig ts       -> VMkSig [(x, zonk t) | (x, t) <- ts]
+    VProj v x sp    -> VProj (zonk v) x (zonkSp sp)
+    VSort s         -> VSort (zonk s)
+    VPropTm         -> VPropTm
+
+instance Zonk VType where 
+  zonk (VEl t s) = VEl (zonk t) (zonk s)

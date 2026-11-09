@@ -14,6 +14,11 @@ import Syntax
 import Cxt.Type
 import GHC.Stack (HasCallStack)
 import Definition
+    ( DataDef(dataName),
+      FuncDef(funcName),
+      EqConsDef(eqNameDef),
+      ConsDef(consName),
+      Def(DefEq, DefFunc, DefData, DefCons) )
 import qualified Data.Map as M
 
 --------------------------------------------------------------------------------
@@ -73,7 +78,7 @@ prettyTm prec = go prec where
                                    goLam ns t =
                                      (". "++) . go letp ns t
 
-    Absurd t                     -> par p appp $ ("absurd "++) . go atomp ns t
+    Absurd t                      -> par p appp $ ("absurd "++) . go atomp ns t
     Pi "_" Expl (El a _) (El b _) -> par p pip $ go appp ns a . (" → "++) . go pip (ns:>"_") b
 
     Pi (fresh ns -> x) i (El a as) b -> par p pip $ piBind ns x i a . goPi (ns:>x) b where
@@ -117,4 +122,4 @@ showDefs = unlines $ map showDef (M.toList ?defs) where
     DefFunc f -> "def " ++ funcName f
     DefData d -> "data " ++ dataName d
     DefCons c -> "constructor " ++ consName c
-    DefEq eq -> "eq " ++ eqNameDef eq
+    DefEq eq  -> "eq " ++ eqNameDef eq

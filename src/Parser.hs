@@ -439,5 +439,3 @@ parseStringProgram fp src =
       throwIO TopLevelError
     Right t ->
       pure t
-
-
