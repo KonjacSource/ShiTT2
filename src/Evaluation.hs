@@ -12,6 +12,7 @@ import GHC.Stack (HasCallStack)
 import Text.Printf (printf)
 import Data.Bifunctor 
 import Data.Maybe
+import {-# SOURCE #-} ObsEval
 
 
 data MatchResult a
@@ -85,25 +86,25 @@ infixl 8 $$
 
 vApp :: HasGlobal => Val -> Val -> Icit -> Val
 vApp t u i = case force t of
-  VLam _ _ t     -> t $$ u
-  VFlex  m sp    -> VFlex  m (sp :> (u, i))
-  VRigid x sp    -> VRigid x (sp :> (u, i))
+  VLam _ _ t      -> t $$ u
+  VFlex  m sp     -> VFlex  m (sp :> (u, i))
+  VRigid x sp     -> VRigid x (sp :> (u, i))
   -- env is used here,  when t is a meta solution, so that env = [], then t must be a closed term. so sp is empty too.
   VFunc f sp
     | length sp + 1 < arity f -> evalFun [] f (funcClauses f) (sp :> (force' u, i))
-    | otherwise ->
+    | otherwise   ->
         let (rest, sp') = splitAt (length sp + 1 - arity f) (sp :> (force' u,i)) in
           vAppSp (evalFun [] f (funcClauses f) sp') rest
-  VHold f sp m   -> VHold f (sp :> (u,i)) m
-  VCons c sp     -> VCons c (sp :> (u,i))
-  VPathCons c sp -> VPathCons c (sp :> (u, i))
-  VData d sp     -> VData d (sp :> (u,i))
-  VProj v x sp   -> VProj v x (sp :> (u, i))
-  VPrim Cast vs _ -> mkPrim Cast (vs :> (u, i)) -- TODO: OTT computational rules
-  VPrim Oeq  vs _ -> mkPrim Oeq (vs :> (u, i)) -- Oeq is reduced lazily in force, see reduceOeq
-  VPrim p vs r   -> VPrim p (vs :> (u, i)) r
-  VAbsurd v      -> VAbsurd v
-  t              -> error $ "IMPOSSIBLE: " ++ show t
+  VHold f sp m    -> VHold f     (sp :> (u, i)) m
+  VCons c sp      -> VCons c     (sp :> (u, i))
+  VPathCons c sp  -> VPathCons c (sp :> (u, i))
+  VData d sp      -> VData d     (sp :> (u, i))
+  VProj v x sp    -> VProj v x   (sp :> (u, i))
+  VPrim Cast sp _ -> mkPrim Cast (sp :> (u, i)) -- TODO: OTT computational rules
+  VPrim Oeq  sp _ -> mkPrim Oeq  (sp :> (u, i)) -- Oeq is reduced lazily in force, see reduceOeq
+  VPrim p sp r    -> VPrim p     (sp :> (u, i)) r
+  VAbsurd v       -> VAbsurd v
+  t               -> error $ "IMPOSSIBLE: " ++ show t
   where
     mkPrim p sp = VPrim p sp (reducePrim p sp)
     reducePrim :: HasGlobal => Prim -> Spine -> Reduced
@@ -112,135 +113,12 @@ vApp t u i = case force t of
       Nothing -> case blockers (force a) ++ blockers (force t) ++ blockers (force u) of
         [] -> RNeutral
         ms -> RBlocked ms
+    reducePrim Cast sp@([]:>(a, CastIcit):>(b, CastIcit):>_:>_) = case reduceCast sp of
+      Just r  -> RReduced r
+      Nothing -> case blockers (force a) ++ blockers (force b) of
+        [] -> RNeutral
+        ms -> RBlocked ms
     reducePrim _ _ = RNeutral
-
--- | One step of Oeq computation. Nothing if it does not reduce (yet).
--- Oeq is not reduced during evaluation, but in `force`, so that the unreduced form is kept
--- for unification (e.g. `Oeq {U} ?A ?B =?= Oeq {U} (sig ..) (sig ..)`), and a stuck Oeq is
--- re-computed once the blocking metas are solved.
-reduceOeq :: HasGlobal => Spine -> Maybe Val
-reduceOeq ([]:>(a, Impl):>(t, Expl):>(u, Expl)) = case (force a, force t, force u) of
-  (a                , VSig envt telet   , VSig envu teleu       ) -> oeqTeleTy (envt, telet) (envu, teleu)
-  (_                , VPi x i a b bsort , VPi x' i' a' b' bsort')
-    | i == i' -> oeqTeleTy (piTele x i a b bsort) (piTele x' i' a' b' bsort')
-  (VPi x i a b bsort, f                 , g                     ) -> Just $ funextTy x i a b f g
-  (VSig envt telet  , a                 , b                     ) -> Just $ sigEqTy envt telet a b
-  _ -> Nothing
-reduceOeq _ = Nothing
-
-
--- | funextTy x i a b f g => (x : a)_i -> f x ~{b x} g x
-funextTy :: Name -> Icit -> VType -> Closure -> Val -> Val -> VTy
-funextTy x i a b f g = VPi x i a (Closure ([] :> VLam x i b :> f :> g) body) SProp where
-  body = applySp (Prim Oeq) [ (App (Var 3) (Var 0) i, Impl)    -- b x
-                            , (App (Var 2) (Var 0) i, Expl)    -- f x
-                            , (App (Var 1) (Var 0) i, Expl) ]  -- g x
-
-piTele :: Name -> Icit -> VType -> Closure -> Sort -> (Env, Telescope')
-piTele x i a b bsort = ( [] :> unVEl a :> VLam x i b
-                       , [ ("dom", El (Var 1) (getVSort a))
-                         , ("cod", El (App (Var 1) (Var 0) i) bsort)])
-
--- | Generating a sigma type, recording the equality between two telescopes.
--- > Δ1 = (x_0 : A_0) (x_1 : A_1[x_0]) ... (x_(n-1) : A_(n-1)[x_<(n-1)])
--- > Δ2 = (x_0 : B_0) (x_1 : B_1[x_0]) ... (x_(n-1) : B_(n-1)[x_<(n-1)])     -- field names must agree
---   we get
--- > sig
--- > { x_0 : A_0 ~{s_0} B_0
--- > ; x_1 : (x_0 : A_0) -> A_1[x_0] ~{s_1} B_1[y_0]
--- > ; x_2 : (x_0 : A_0) (x_1 : A_1[x_0]) -> A_2[x_0, x_1] ~{s_2} B_2[y_0, y_1]
--- > ...}
---   where s_j is the sort of both A_j and B_j, f_j is the j-th field of this sig, and
--- >   y_j = cast {A_j[x_<j]} {B_j[y_<j]} (f_j x_<j) x_j   if s_j = Type
--- >   y_j = ..                                              if s_j = Prop  (cast for prop is postulated)
---   return Nothing if it does not reduce: the field names differ, or some field sorts are not solved yet or differ.
-oeqTeleTy :: HasGlobal => (Env, Telescope') -> (Env, Telescope') -> Maybe VTy
-oeqTeleTy (envA, as) (envB, bs)
-  | fieldNames == map fst bs
-  , and [ known s && s == s' | (s, s') <- fieldSorts ] = Just $ VSig famEnv [ (x, eqField k) | (k, x) <- zip [0 ..] fieldNames ]
-  | otherwise = Nothing
-  where
-    n          = length as
-    fieldNames = map fst as
-    -- the sorts of the j-th fields of Δ1 and Δ2
-    fieldSorts = zipWith (\(_, a) (_, b) -> (force (getSort a), force (getSort b))) as bs
-
-    known s    = s == SType || s == SProp
-    -- s_j, only used when all the field sorts are known and agree
-    fieldSort j = fst (fieldSorts !! j)
-    -- env ⊢ tys  ==>  env ⊢ λ x_0 .. x_(j-1). A_j  (the j-th field type as a function of the previous fields)
-    fieldFamily :: Env -> Telescope' -> Int -> Val
-    fieldFamily env tys j = eval env $ foldr (\x -> Lam x Expl) (unEl (snd (tys !! j))) (map fst (take j tys))
-    -- Θ; G_j has local level j, H_j has local level n + j
-    famEnv = reverse $ [ fieldFamily envA as j | j <- [0 .. n - 1] ]
-                    ++ [ fieldFamily envB bs j | j <- [0 .. n - 1] ]
-    -- At depth `depth`, the variable of local level `l`
-    varAt :: Int -> Int -> Tm
-    varAt depth l = Var (Ix (depth - l - 1))
-
-    mkOeq s a b = applySp (Prim Oeq) [(TmSort s, Impl), (a, Expl), (b, Expl)]
-
-    -- Θ, f_0 .. f_(k-1) ⊢ eqField k
-    --   = (x_0 : A_0) .. (x_(k-1) : A_(k-1)[x_<(k-1)]) -> let y_0 = ..; ..; let y_(k-1) = ..; A_k[x_<k] ~{s_k} B_k[y_<k]
-    -- Local levels: G_j = j, H_j = n + j, f_j = 2n + j, x_j = 2n + k + j, y_j = 2n + 2k + j
-    eqField :: Int -> Type
-    eqField k = mkPiE [ (fieldNames !! j, El (tyA (lvlX j) j) (fieldSort j)) | j <- [0 .. k - 1] ]
-                      (El (letYs 0) SProp)
-      where
-        lvlF j = 2 * n + j
-        lvlX j = 2 * n + k + j
-        lvlY j = 2 * n + 2 * k + j
-        -- At depth d:  G_j x_<j = A_j[x_<j],  H_j y_<j = B_j[y_<j],  f_j x_<j : A_j[x_<j] ~ B_j[y_<j]
-        tyA   d j = applySp (varAt d j)        [ (varAt d (lvlX i), Expl) | i <- [0 .. j - 1] ]
-        tyB   d j = applySp (varAt d (n + j))  [ (varAt d (lvlY i), Expl) | i <- [0 .. j - 1] ]
-        proof d j = applySp (varAt d (lvlF j)) [ (varAt d (lvlX i), Expl) | i <- [0 .. j - 1] ]
-        -- Θ, f_<k, x_<k, y_<j ⊢ letYs j   (at depth lvlY j)
-        letYs j
-          | j == k    = mkOeq (fieldSort k) (tyA d k) (tyB d k)
-          | otherwise = Let (fieldNames !! j ++ "'") (El (tyB d j) (fieldSort j)) (castX d j) (letYs (j + 1))
-          where d = lvlY j
-        -- At depth d: y_j
-        castX d j
-          | fieldSort j == SProp = PropTm
-          | otherwise            = applySp (Prim Cast) [ (tyA d j, casticit), (tyB d j, casticit)
-                                                       , (proof d j, Expl), (varAt d (lvlX j), Expl) ]
-
--- | sigEqTy env [(x1:A1), (x2:A2[x1]), ...] a b => sig {x1 : a.x1 ~{A1} b.x1; x2 : a.x2 ~{A2[a.x1]} cast {A2[b.x1] ~> A2[a.x1]} b.x2; ...}
-sigEqTy :: HasGlobal => Env -> Telescope' -> Val -> Val -> VTy
-sigEqTy env tele a b = VSig famEnv [ (names !! k, eqField m k) | (m, k) <- zip [0 ..] kept ]
-  where
-    n     = length tele
-    names = map fst tele
-    -- Fields in Prop are omitted: their equations hold trivially by proof irrelevance
-    -- (and `cast` only works on Type). Only `SProp` is omitted, other sorts are kept.
-    kept  = [ k | (k, (_, ty)) <- zip [0 ..] tele, force (getSort ty) /= SProp ]
-    -- env ⊢ tele  ==>  env ⊢ λ x_0 .. x_(k-1). A_k  (the k-th field type as a function of the previous fields)
-    family :: Int -> Val
-    family k = eval env $ foldr (\x -> Lam x Expl) (unEl (snd (tele !! k))) (take k names)
-    -- Θ; local levels: a = 0, b = 1, G_k = 2 + k (G_k is the family of A_k)
-    famEnv = reverse $ [a, b] ++ [ family k | k <- [0 .. n - 1] ]
-    -- At depth `d`, the variable of local level `l`
-    varAt :: Int -> Int -> Tm
-    varAt d l = Var (Ix (d - l - 1))
-    -- Θ, (the first m kept fields) ⊢ eqField m k : the m-th kept field, i.e. the k-th field of the telescope
-    --   = a.x_0 ~{A_0} b.x_0                                          if k = 0
-    --   = a.x_k ~{A_k[a.x_<k]} cast {A_k[b.x_<k]} {A_k[a.x_<k]} _ b.x_k  otherwise
-    eqField :: Int -> Int -> Type
-    eqField m k = El (applySp (Prim Oeq) [ (tyAt va, Impl), (proj va k, Expl), (castB, Expl) ]) SProp
-      where
-        d        = n + 2 + m
-        va       = varAt d 0
-        vb       = varAt d 1
-        proj v j = Proj v (names !! j)
-        -- A_k[v.x_<k] = G_k v.x_0 .. v.x_(k-1)
-        tyAt v   = applySp (varAt d (2 + k)) [ (proj v j, Expl) | j <- [0 .. k - 1] ]
-        castB
-          | k == 0    = proj vb k
-          | otherwise = applySp (Prim Cast) [ (tyAt vb, casticit), (tyAt va, casticit)
-                                            , (PropTm, Expl), (proj vb k, Expl) ]
-
-wkTm :: HasGlobal => Env -> Lvl -> Lvl -> Tm -> Tm
-wkTm env l n t = quote (l + n) (eval env t)
 
 -- | Make sure `(length sp) <= arity f`
 evalFun :: HasGlobal => Env -> FuncDef -> [Clause] -> Spine -> Val
@@ -368,8 +246,8 @@ ix2Lvl (Lvl l) (Ix x) = Lvl (l - x - 1)
 quoteSp :: HasGlobal => Lvl -> Tm -> Spine -> Tm
 quoteSp l t = \case
   []           -> t
-  sp :> (u, i) -> App (quoteSp l t sp) (quote l u) i
 
+  sp :> (u, i) -> App (quoteSp l t sp) (quote l u) i
 quoteSpFull :: HasGlobal => Lvl -> Tm -> Spine -> Tm
 quoteSpFull l t = \case
   []           -> t
@@ -402,8 +280,8 @@ instance Quote Val Tm where
     VFlex m sp     -> quoteSpFull l (Meta m) sp
     VRigid x sp    -> quoteSpFull l (Var (lvl2Ix l x)) sp
     VLam x i t     -> Lam x i (quoteFull (l + 1) (t $$ VVar l))
-    VPi x i a b bs -> Pi x i (quoteFull l a) (El (quoteFull (l + 1) (b $$ VVar l)) bs)
-    VAbsurd v      -> Absurd (quoteFull l v)
+    VPi x i a b bs -> Pi x i  (quoteFull l a) (El (quoteFull (l + 1) (b $$ VVar l)) bs)
+    VAbsurd v      -> Absurd  (quoteFull l v)
     VCons c sp     -> quoteSpFull l (Call (consName c)) sp
     VFunc f sp     -> quoteSpFull l (Call (funcName f)) sp
     VHold f sp _   -> quoteSpFull l (Call (funcName f)) sp

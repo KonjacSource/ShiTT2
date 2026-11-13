@@ -139,5 +139,4 @@ data Command
   | CmdCheck R.Tm (Maybe R.Tm)  -- ^ #check 
   | CmdFail  RDef               -- ^ #fail
 
-
 type Program = [(SourcePos, RDef)]

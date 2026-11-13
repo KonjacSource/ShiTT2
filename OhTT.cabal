@@ -35,6 +35,7 @@ library
       Errors
       Evaluation
       Metacontext
+      ObsEval
       Parser
       Presyntax
       Pretty

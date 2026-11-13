@@ -1,4 +1,4 @@
-# OhTT
+# NameTBD
 
 This is an experimental project that aims to be a typechecker for Observational Type Theory with support for Quotient Inductive-Inductive Types.
 

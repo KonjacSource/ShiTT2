@@ -279,3 +279,4 @@ testExamples = do
   loadFile "examples/force_problems/rename.shitt" >> reset
   loadFile "examples/force_problems/unifysp.shitt" >> reset
   loadFile "examples/sig_eq.shitt" >> reset
+  loadFile "examples/cast.shitt" >> reset

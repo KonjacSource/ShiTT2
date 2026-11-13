@@ -1,0 +1,39 @@
+def castP : {A B : Prop} -> A ~ B -> A -> B
+
+def symU : {A B : Type} (e : A ~ B) -> B ~ A
+  | {A} {B} e = castP {A~A} {B~A} (apd (\x. x ~ A) e) (rfl A)
+
+def castPiApp : {A B A2 B2 : Type} 
+                (e : ((x : A) -> B) ~ ((x : A2) -> B2))
+                (h1 : A ~ A2) (h2 : B ~ B2) 
+                (f : (x : A) -> B) 
+                (a : A2)
+             -> cast e f a ~ cast h2 (f (cast (symU h1) a))
+  | e h1 h2 f a = rfl _
+
+def castPiDep : {A A2 : Type} {P : A -> Type} {Q : A2 -> Type}
+                (e : ((x : A) -> P x) ~ ((x : A2) -> Q x))
+                (h1 : A ~ A2) (f : (x : A) -> P x) (a : A2) (h2 : P (cast (symU h1) a) ~ Q a)
+             -> cast e f a ~ cast h2 (f (cast (symU h1) a))
+  | e h1 f a h2 = rfl _
+
+def castPairX : {A B A2 B2 : Type} (e : sig { x : A; y : B } ~ sig { x : A2; y : B2 })
+                (h1 : A ~ A2) (p : sig { x : A; y : B })
+             -> (cast e p).x ~ cast h1 p.x
+  | e h1 p = rfl _
+
+def castPairY : {A B A2 B2 : Type} (e : sig { x : A; y : B } ~ sig { x : A2; y : B2 })
+                (h2 : B ~ B2) (p : sig { x : A; y : B })
+             -> (cast e p).y ~ cast h2 p.y
+  | e h2 p = rfl _
+
+def castPairDep : {A A2 : Type} {P : A -> Type} {Q : A2 -> Type}
+                  (e : sig { x : A; y : P x } ~ sig { x : A2; y : Q x })
+                  (h1 : A ~ A2) (p : sig { x : A; y : P x }) (h2 : P p.x ~ Q (cast h1 p.x))
+               -> (cast e p).y ~ cast h2 p.y
+  | e h1 p h2 = rfl _
+
+def castPairProp : {A A2 : Type} (e : sig { x : A; h : x ~ x } ~ sig { x : A2; h : x ~ x })
+                   (h1 : A ~ A2) (p : sig { x : A; h : x ~ x })
+                -> (cast e p).x ~ cast h1 p.x
+  | e h1 p = rfl _

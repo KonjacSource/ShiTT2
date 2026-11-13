@@ -229,7 +229,7 @@ checkApdCls srcpos defs qiti f (RApdClause (R.RPat f' ps) pxye rhs)
         let fps = PatFunc (funcName f) ps' -- f ps 
         let fpsv = p2v (lvl cxt) fps       -- f ps
         let lhs_eq = vAppSp (VPrim Cast [] RNeutral) -- cast [b x] [b y] (apd B e) (f ps x)
-                    ([] :> (bx, casticit) :> (by, casticit)
+                    ([] :> (bx, CastIcit) :> (by, CastIcit)
                         :> (vAppSp (VPrim Apd [] RNeutral) -- This part is proof-irrelevant actually.
                               ([] :> (unVEl $ a, Impl) :> (VLam "_" Expl (Closure [] Type), Impl)
                                   :> (VVar x, Impl) :> (VVar y, Impl)

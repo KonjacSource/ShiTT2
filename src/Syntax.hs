@@ -116,8 +116,8 @@ fieldType ts n = go [] n ts where
 -- cast (A B : U) (p : A = B) (a : A) : B
 -- or
 -- cast {A B : U} (p : A = B) (a : A) : A
-casticit :: Icit
-casticit = Impl
+pattern CastIcit :: Icit
+pattern CastIcit = Impl
 
 eApp :: Tm -> Tm -> Tm
 eApp t u = App t u Expl
@@ -180,8 +180,8 @@ apdTy = mkProp $
             b = Var 4
             a = Var 5
             lhs = applySp (Prim Cast) $
-              [ (eApp b x, casticit)
-              , (eApp b y, casticit)
+              [ (eApp b x, CastIcit)
+              , (eApp b y, CastIcit)
               , (applySp (Prim Apd)
                     [ (a, Impl), (Lam "_" Expl Type, Impl)
                     , (x, Impl), (y, Impl), (b, Expl), (h, Expl)
@@ -195,8 +195,8 @@ apdTy = mkProp $
 -- Note: cast for prop can be safely postulated.
 castTy :: Type
 castTy = mkType $ 
-         Pi "A" casticit (mkType Type) $ mkType $
-         Pi "B" casticit (mkType Type) $ mkType $ 
+         Pi "A" CastIcit (mkType Type) $ mkType $
+         Pi "B" CastIcit (mkType Type) $ mkType $ 
          Pi "_" Expl (mkProp $ applySp (Prim Oeq) [(Type, Impl), (Var 1, Expl), (Var 0, Expl)]) $ mkType $ 
          Pi "_" Expl (mkType $ Var 2) $ mkType $
          Var 2
